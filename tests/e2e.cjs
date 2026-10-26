@@ -181,7 +181,7 @@ async function renderPdf(page, key, mode, orient, file) {
 
   // ---------------------------------------------------------------- plan link round trip
   await page.evaluate(() => WSLSA.select('2848|BASE'));
-  const url = await page.evaluate(() => location.href);
+  const url = await page.evaluate(() => WSLSA.planUrl());
   const fresh = await browser.newContext();
   const p2 = await fresh.newPage();
   await p2.goto(url);
@@ -190,6 +190,67 @@ async function renderPdf(page, key, mode, orient, file) {
   await p2.goto(APP + '#plan=not-valid-base64!!');
   check(await p2.evaluate(() => !!WSLSA.context().key), 'a malformed plan link should fall back gracefully');
   await fresh.close();
+
+  // ---------------------------------------------------------------- short share links
+  // the address bar stays clean while planning, and links carry only what differs from the pathway
+  check(await page.evaluate(() => location.hash) === '', 'the address bar should not carry the plan while planning');
+  check(/^#2848\/p=1A4:HUMN1052,2S2:LAWS3067,3A2:LAWS4008(\/|$)/.test(new URL(url).hash) && new URL(url).hash.length < 80, `2848 choices should make a short link, got ${new URL(url).hash}`);
+  const links = await browser.newContext();
+  const lp = await links.newPage();
+  lp.errors = [];
+  lp.on('pageerror', e => lp.errors.push(e.message));
+  await lp.goto(APP);
+  await lp.evaluate(() => { localStorage.clear(); WSLSA.select('2848|BASE'); });
+  check(new URL(await lp.evaluate(() => WSLSA.planUrl())).hash === '#2848', 'an untouched pathway should link as #2848');
+  // a typed elective keeps its title; ticks, campus and part-time survive a round trip
+  await lp.click('#slot-1A4 [data-action="picker-open"]');
+  await lp.fill('#cu-code', 'TEST 1001');
+  await lp.fill('#cu-title', 'Moot (Advanced): A/B, 50%');
+  await lp.click('#custom-form button[type=submit]');
+  await lp.click('#slot-1A1 .tick');
+  await lp.selectOption('#sel-campus', 'CA');
+  await lp.click('[data-action="load"][data-load="PT"]');
+  const plan = () => { const s = WSLSA.state(); const k = WSLSA.context().key; return JSON.stringify([k, s.picks[k]['1A4'], Object.keys(s.done[k]), s.campus, s.load]); };
+  const guideBefore = await lp.evaluate(plan);
+  const guideLink = await lp.evaluate(() => WSLSA.planUrl());
+  const lp2 = await links.newPage();
+  await lp2.goto(guideLink);
+  check(await lp2.evaluate(plan) === guideBefore, `a pathway link should restore the typed elective, tick, campus and load, got ${await lp2.evaluate(plan)}`);
+  check(await lp2.evaluate(() => location.hash) === '', 'opening a link should clear it from the address bar');
+  // a custom copy of a pathway links as ranges of untouched template slots
+  await lp.click('[data-action="load"][data-load="FT"]');
+  await lp.evaluate(() => WSLSA.select('2788|T046'));
+  await lp.click('[data-action="summer-add"][data-y="1"]');
+  await lp.click('button[type=submit][form=setup-form]');
+  await lp.click(`#slot-${await lp.evaluate(() => WSLSA.context().slots.find(s => s.session === 'Summer').id)} [data-action="picker-open"]`);
+  await lp.click('[data-action="cbring"]');
+  const customLinkUrl = await lp.evaluate(() => WSLSA.planUrl());
+  check(/^#my\/tp=2788-T046\/s=[\d,:\-AUS]+/.test(new URL(customLinkUrl).hash) && new URL(customLinkUrl).hash.length < 80, `a custom copy should link by template ranges, got ${new URL(customLinkUrl).hash}`);
+  const customBefore = await lp.evaluate(() => JSON.stringify(WSLSA.custom()));
+  const lp3 = await links.newPage();
+  await lp3.goto(customLinkUrl);
+  check(await lp3.evaluate(() => JSON.stringify(WSLSA.custom())) === customBefore, 'a custom plan link should restore the plan exactly');
+  // links shared or printed before the short format still open
+  const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const lp4 = await links.newPage();
+  lp4.errors = [];
+  lp4.on('pageerror', e => lp4.errors.push(e.message));
+  await lp4.goto(APP + '#plan=' + b64({ v: 1, k: '2848|BASE', c: 'CA', l: 'PT', t: 0, p: { '2S2': { code: 'LAWS 3067', title: 'Health Law' } }, d: ['1A1'] }));
+  check(await lp4.evaluate(() => { const c = WSLSA.context(); return c.key === '2848|BASE' && c.byId['2S2'].code === 'LAWS 3067' && c.byId['1A1'].done && WSLSA.state().load === 'PT'; }), 'an older #plan= pathway link should still open');
+  // the same tab: a link opened where the explorer is already showing changes only the hash
+  await lp4.goto(APP + '#plan=' + b64({ v: 1, m: 'c', c: '', l: 'FT', t: 0, x: { n: 'Old plan', k: '', p: 80, tp: '', s: [[1, 0, 'LAWS 1003', 10, 1], [1, 1, '', 10]] } }));
+  await lp4.waitForTimeout(100);
+  check(await lp4.evaluate(() => { const c = WSLSA.custom(); return WSLSA.context().custom && c.name === 'Old plan' && c.slots.length === 2 && c.slots[0].done && location.hash === ''; }), 'an older #plan= custom link should open in a tab already showing the explorer');
+  for (const bad of ['#9999-ZZZZ/p=1A1:LAWS1003', '#my/tp=1234/s=0-9', '#my/s=%E0%A4%A,1A:%ZZ/d=***']) {
+    const lp5 = await links.newPage();
+    lp5.errors = [];
+    lp5.on('pageerror', e => lp5.errors.push(e.message));
+    await lp5.goto(APP + bad);
+    check(await lp5.evaluate(() => !!WSLSA.context().key) && lp5.errors.length === 0, `a damaged link (${bad}) should fall back gracefully: ${lp5.errors.join('; ')}`);
+    await lp4.goto(APP + bad);
+  }
+  check(lp.errors.length === 0 && lp4.errors.length === 0, 'share link console errors: ' + lp.errors.concat(lp4.errors).join('; '));
+  await links.close();
 
   // ---------------------------------------------------------------- WSU subject list and ranked elective search
   check(await page.evaluate(() => WSLSA.extraCount()) === 3407, 'all 3,407 new subjects from the subject list should be loaded');
@@ -221,7 +282,7 @@ async function renderPdf(page, key, mode, orient, file) {
   const listPick = await page.evaluate(() => { const s = WSLSA.context().byId['1S4']; return [s.code, s.listSubject, s.offer]; });
   check(listPick[0] === 'ACCT 2004' && listPick[1] === true && listPick[2] === null, 'choosing from the subject list should store a subject-list elective');
   check(/Check Handbook/.test(await page.textContent('#slot-1S4')), 'subject-list electives should point students to the Handbook for sessions');
-  const listUrl = await page.evaluate(() => location.href);
+  const listUrl = await page.evaluate(() => WSLSA.planUrl());
   const ctx2 = await browser.newContext();
   const p3 = await ctx2.newPage();
   await p3.goto(listUrl);
@@ -264,7 +325,7 @@ async function renderPdf(page, key, mode, orient, file) {
   await page.click('#slot-3S1 .tick');
   check(await page.evaluate(() => WSLSA.context().doneCP) === before, 'unticking should remove the CP again');
   const planDoc = await page.evaluate(() => WSLSA.buildPrintDoc({ mode: 'A', orient: 'portrait' }));
-  check(/#plan=/.test(planDoc) && /Est\. 1996/.test(planDoc), 'PDF masthead should carry the plan link and Est. 1996 line');
+  check(/pd-plan">[^<]*#\d{4}/.test(planDoc) && /Est\. 1996/.test(planDoc), 'PDF masthead should carry the plan link and Est. 1996 line');
 
   // ---------------------------------------------------------------- export modal and print document
   await page.click('[data-action="export-open"]');
@@ -311,7 +372,7 @@ async function renderPdf(page, key, mode, orient, file) {
   check(/1 in Summer to check/.test(await sp.textContent('#advisory-box summary')) && /lawenquiry@westernsydney\.edu\.au/.test(await sp.textContent('#advisory')), 'the advisory should flag the Summer subject and give the Law Enquiry contact');
   check(/Check Handbook/.test(await sp.textContent('#grid .session-summer')), 'Summer subjects should point to the Handbook instead of campus pills');
   // plan links keep Summer, and Summer survives the part-time view and the PDF
-  const summerUrl = await sp.evaluate(() => location.href);
+  const summerUrl = await sp.evaluate(() => WSLSA.planUrl());
   const sp2 = await newPage(browser);
   await sp2.goto(summerUrl);
   check(await sp2.evaluate(c => WSLSA.custom().slots.some(x => x.s === 'Summer' && x.y === 1 && x.code === c), fromCode), 'a plan link should restore the Summer subject');

@@ -1243,20 +1243,163 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
     return deg.options.indexOf(k) >= 0 ? k : deg.options[0];
   }
 
-  // ---- shareable URL hash: #plan=<base64url(JSON)>
-  function b64enc(s) { return btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
-  function b64dec(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return decodeURIComponent(escape(atob(s))); }
-  // custom plans travel as compact rows: [year, 0 Autumn / 1 Spring / 2 Summer, code, CP, flags (1 = done), template slot, typed title]
-  function packCustom(c) {
-    return {
-      n: c.name, k: c.code, p: c.cp, tp: c.tpl,
-      s: c.slots.map(function (x) {
-        const r = [x.y, PLAN_SESSIONS.indexOf(x.s), x.code, x.cp, x.done ? 1 : 0, x.o, x.title];
-        while (r.length > 4 && !r[r.length - 1]) r.pop();
-        return r;
-      }),
-    };
+  // ---- share links. The address bar stays clean while a student plans; a link is built only when
+  // they copy it or print. A link names the pathway and carries only what differs from it:
+  //   #2788-T046/p=2A3:LAWS3067/d=Pw/c=PC      a WSLSA pathway with a choice, ticks and a campus
+  //   #my/tp=2788-T046/s=0-12,1U:LAWS2003::13,14-39   a custom copy of that pathway: runs of untouched
+  //                                                    template slots as index ranges, changed slots in full
+  // Subject titles are looked up from the code, so only titles typed in by hand travel in the link.
+  const SESS_LETTER = { Autumn: 'A', Spring: 'S', Summer: 'U' };
+  const LETTER_SESS = { A: 'Autumn', S: 'Spring', U: 'Summer' };
+  // free text is percent-encoded, including the characters links use as separators
+  function enc(s) { return encodeURIComponent(s).replace(/[!'()*.~]/g, function (c) { return '%' + c.charCodeAt(0).toString(16).toUpperCase(); }); }
+  function dec(s) { try { return decodeURIComponent(s); } catch (e) { return ''; } }
+  function linkCode(code) { return normCode(code) === code ? code.replace(' ', '') : enc(code); }
+  function linkKey(key) { return key.replace('|BASE', '').replace('|', '-'); }
+  function keyFromLink(s) { const m = /^(\d{4})(?:-([A-Z0-9]+))?$/.exec(s || ''); return m ? m[1] + '|' + (m[2] || 'BASE') : ''; }
+  // completed ticks travel as one bit per slot, six to a character
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  function packBits(flags) {
+    let out = '';
+    for (let i = 0; i < flags.length; i += 6) {
+      let v = 0;
+      for (let j = 0; j < 6 && i + j < flags.length; j++) if (flags[i + j]) v |= 1 << j;
+      out += B64.charAt(v);
+    }
+    return out.replace(/A+$/, '');
   }
+  function unpackBits(s, n) {
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(((Math.max(0, B64.indexOf(s.charAt(Math.floor(i / 6)))) >> (i % 6)) & 1) === 1);
+    return out;
+  }
+  function guideLink(key) {
+    const picks = state.picks[key] || {};
+    const done = state.done[key] || {};
+    const parts = [linkKey(key)];
+    const p = PATH[key].filter(function (r) { return picks[r.id]; }).map(function (r) {
+      const k = picks[r.id];
+      return r.id + ':' + linkCode(k.code) + (k.custom ? ':' + enc(k.title) : '');
+    });
+    if (p.length) parts.push('p=' + p.join(','));
+    const d = packBits(PATH[key].map(function (r) { return !!done[r.id]; }));
+    if (d) parts.push('d=' + d);
+    return parts;
+  }
+  function customLink(plan) {
+    const tdeg = plan.tpl ? DEG[plan.tpl.split('|')[0]] : null;
+    const tpl = plan.tpl ? templateSlots(plan.tpl, false) : [];
+    const tIdx = {};
+    tpl.forEach(function (t, i) { tIdx[t.o] = i; });
+    const parts = ['my'];
+    if (tdeg) parts.push('tp=' + linkKey(plan.tpl));
+    if (plan.name !== (tdeg ? tdeg.title : '')) parts.push('n=' + enc(plan.name));
+    if (plan.code !== (tdeg ? tdeg.code : '')) parts.push('k=' + enc(plan.code));
+    if (!tdeg || plan.cp !== tdeg.cp) parts.push('cp=' + plan.cp);
+    const items = [];
+    let run = null;
+    const flush = function () { if (run) items.push(run[0] === run[1] ? String(run[0]) : run[0] + '-' + run[1]); run = null; };
+    plan.slots.forEach(function (x) {
+      const i = x.o && tIdx[x.o] != null ? tIdx[x.o] : -1;
+      const t = i >= 0 ? tpl[i] : null;
+      if (t && x.y === t.y && x.s === t.s && x.code === t.code && x.cp === t.cp && !x.title) {
+        if (run && run[1] === i - 1) run[1] = i; else { flush(); run = [i, i]; }
+        return;
+      }
+      flush();
+      const f = [x.code ? linkCode(x.code) : '', x.cp !== (t ? t.cp : 10) ? String(x.cp) : '', i >= 0 ? String(i) : '', x.title ? enc(x.title) : ''];
+      while (f.length && !f[f.length - 1]) f.pop();
+      items.push(x.y + SESS_LETTER[x.s] + (f.length ? ':' + f.join(':') : ''));
+    });
+    flush();
+    // identical changed slots in a row (empty slots in a blank plan) collapse to item*count
+    const runs = [];
+    items.forEach(function (it) {
+      const last = runs[runs.length - 1];
+      if (last && last.it === it && /[ASU]/.test(it)) last.n++; else runs.push({ it: it, n: 1 });
+    });
+    if (runs.length) parts.push('s=' + runs.map(function (r) { return r.n > 1 ? r.it + '*' + r.n : r.it; }).join(','));
+    const d = packBits(plan.slots.map(function (x) { return x.done; }));
+    if (d) parts.push('d=' + d);
+    return parts;
+  }
+  function encodeLink() {
+    const parts = isCustom() ? customLink(state.custom) : guideLink(currentKey());
+    if (state.campus) parts.push('c=' + state.campus);
+    if (state.load === 'PT') parts.push('pt');
+    return parts.join('/');
+  }
+  function guideFromLink(key, f) {
+    const picks = {};
+    (f.p ? f.p.split(',') : []).forEach(function (item) {
+      const v = item.split(':');
+      const raw = PATH[key].find(function (r) { return r.id === v[0]; });
+      if (!raw) return;
+      const typed = dec(v[1] || '');
+      const code = normCode(typed) || typed.trim();
+      if (v[2] != null) { picks[raw.id] = { code: code, title: dec(v[2]), custom: true }; return; }
+      const known = (raw.options && raw.options.find(function (o) { return o.code === code; })) || GLOBAL_BY_CODE[code] || EXTRA_BY_CODE[code];
+      if (known) picks[raw.id] = { code: code, title: known.title, list: !!EXTRA_BY_CODE[code] };
+    });
+    const bits = unpackBits(f.d || '', PATH[key].length);
+    return { picks: sanitisePicks(key, picks), done: sanitiseDone(key, PATH[key].filter(function (r, i) { return bits[i]; }).map(function (r) { return r.id; })) };
+  }
+  function customFromLink(f) {
+    const tpl = keyFromLink(f.tp);
+    if (f.tp && !PATH[tpl]) return null;
+    const tdeg = tpl ? DEG[tpl.split('|')[0]] : null;
+    const base = tpl ? templateSlots(tpl, false) : [];
+    const slots = [];
+    (f.s ? f.s.split(',') : []).forEach(function (item) {
+      const rep = /^(.*)\*(\d+)$/.exec(item);
+      const it = rep ? rep[1] : item;
+      const range = /^(\d+)(?:-(\d+))?$/.exec(it);
+      if (range) {
+        for (let i = +range[1]; i <= +(range[2] || range[1]) && i < base.length && slots.length < MAX_SLOTS; i++) slots.push(Object.assign({}, base[i]));
+        return;
+      }
+      const m = /^(\d+)([ASU])(?::(.*))?$/.exec(it);
+      if (!m) return;
+      const v = (m[3] || '').split(':');
+      const t = v[2] ? base[+v[2]] || null : null;
+      const x = { y: +m[1], s: LETTER_SESS[m[2]], code: dec(v[0] || ''), cp: v[1] ? +v[1] : t ? t.cp : 10, o: t ? t.o : '', title: dec(v[3] || ''), done: false };
+      for (let n = rep ? +rep[2] : 1; n > 0 && slots.length < MAX_SLOTS; n--) slots.push(Object.assign({}, x));
+    });
+    const bits = unpackBits(f.d || '', slots.length);
+    slots.forEach(function (x, i) { x.done = bits[i]; });
+    return sanitiseCustom({
+      name: 'n' in f ? dec(f.n) : tdeg ? tdeg.title : '',
+      code: 'k' in f ? dec(f.k) : tdeg ? tdeg.code : '',
+      cp: f.cp ? +f.cp : tdeg ? tdeg.cp : 10, tpl: tpl, slots: slots,
+    });
+  }
+  function applyLink(s) {
+    const segs = s.split('/');
+    const f = Object.create(null);
+    segs.slice(1).forEach(function (seg) { const i = seg.indexOf('='); if (i < 0) f[seg] = true; else f[seg.slice(0, i)] = seg.slice(i + 1); });
+    if (segs[0] === 'my') {
+      const c = customFromLink(f);
+      if (!c) return false;
+      state.custom = c;
+      state.mode = 'custom';
+    } else {
+      const key = keyFromLink(segs[0]);
+      if (!PATH[key]) return false;
+      const g = guideFromLink(key, f);
+      const deg = key.split('|')[0];
+      state.mode = 'guide';
+      state.degree = deg;
+      state.majorFor[deg] = key;
+      state.picks[key] = g.picks;
+      state.done[key] = g.done;
+    }
+    state.campus = PRIMARY_CAMPUSES.indexOf(f.c) >= 0 ? f.c : '';
+    state.load = f.pt === true ? 'PT' : 'FT';
+    return true;
+  }
+
+  // ---- older links: #plan=<base64url(JSON)>, still opened so links already shared and printed keep working
+  function b64dec(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return decodeURIComponent(escape(atob(s))); }
   function unpackCustom(o) {
     if (!o || typeof o !== 'object' || !Array.isArray(o.s)) return null;
     return sanitiseCustom({
@@ -1266,18 +1409,8 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
       }),
     });
   }
-  function encodePlan() {
-    if (isCustom()) {
-      return b64enc(JSON.stringify({ v: 1, m: 'c', c: state.campus, l: state.load, t: state.track ? 1 : 0, x: packCustom(state.custom) }));
-    }
-    const key = currentKey();
-    return b64enc(JSON.stringify({
-      v: 1, k: key, c: state.campus, l: state.load, t: state.track ? 1 : 0,
-      p: state.picks[key] || {}, d: Object.keys(state.done[key] || {}),
-    }));
-  }
-  function applyHash() {
-    const m = /^#plan=([A-Za-z0-9_-]+)$/.exec(location.hash || '');
+  function applyLegacyLink(h) {
+    const m = /^#plan=([A-Za-z0-9_-]+)$/.exec(h);
     if (!m) return false;
     try {
       const o = JSON.parse(b64dec(m[1]));
@@ -1304,10 +1437,17 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
       return true;
     } catch (e) { return false; }
   }
-  function planUrl() { return location.href.split('#')[0] + '#plan=' + encodePlan(); }
-  function syncHash() {
-    try { history.replaceState(null, '', '#plan=' + encodePlan()); } catch (e) { /* file:// in some browsers */ }
+  // Opens a plan link, then clears it from the address bar so the address stays short and a
+  // reload keeps any changes made after opening it.
+  function applyHash() {
+    const h = location.hash || '';
+    if (!h) return false;
+    let ok = false;
+    try { ok = /^#plan=/.test(h) ? applyLegacyLink(h) : applyLink(h.slice(1)); } catch (e) { /* a damaged link opens the saved plan instead */ }
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* file:// in some browsers */ }
+    return ok;
   }
+  function planUrl() { return location.href.split('#')[0] + '#' + encodeLink(); }
 
   // ======================================================================== slot resolution
   function placeholder(raw) {
@@ -2176,7 +2316,6 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
     renderFoot(ctx);
     if (active && document.getElementById(active) && /^(sel-|cat-|custom-name)/.test(active)) document.getElementById(active).focus({ preventScroll: true });
     saveState();
-    syncHash();
     if (ui.modal === 'export') renderExportPreview();
   }
 
@@ -3234,7 +3373,6 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
       lastCtx = buildContext();
       renderHero(lastCtx);
       saveState();
-      syncHash();
     } else if (t.id === 'cs-cp') { setupSync('cp'); }
     else if (t.id === 'cs-name' || t.id === 'cs-code') { delete t.dataset.auto; }
     else if (t.id === 'cu-code') {
@@ -3260,6 +3398,14 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
   // remember whether the advisory panel is open across re-renders (toggle does not bubble)
   document.addEventListener('toggle', function (ev) { if (ev.target.id === 'advisory-box') ui.advisoryOpen = ev.target.open; }, true);
 
+  // a link opened in a tab that already shows the explorer changes only the hash, without a reload
+  window.addEventListener('hashchange', function () {
+    if (!applyHash()) return;
+    if (ui.modal) closeModal();
+    render();
+    toast('Plan opened from the link.');
+  });
+
   // ======================================================================== boot
   applyHash();
   renderNotice();
@@ -3273,6 +3419,7 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
     extraCount: function () { return EXTRA.length; },
     select: function (key) { const d = key.split('|')[0]; state.mode = 'guide'; state.degree = d; state.majorFor[d] = key; render(); },
     custom: function () { return state.custom ? JSON.parse(JSON.stringify(state.custom)) : null; },
+    planUrl: function () { return planUrl(); },
     buildPrintDoc: function (opts) { return buildPrintDoc(buildContext(), Object.assign({}, state.exp, opts || {})); },
     preparePrint: function (opts) { Object.assign(state.exp, opts || {}); preparePrint(); },
   };

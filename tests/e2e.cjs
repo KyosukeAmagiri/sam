@@ -274,6 +274,61 @@ async function renderPdf(page, key, mode, orient, file) {
   const docB = await page.evaluate(() => WSLSA.buildPrintDoc({ mode: 'B', orient: 'portrait' }));
   check(docB.includes('LLB Alternate Subjects') && docB.includes('pd-page-break'), 'Mode B should append the LLB Alternate table after a page break');
 
+  // ---------------------------------------------------------------- School of Law notice and Law Enquiry contact
+  const LAW_ENQUIRY = 'lawenquiry@westernsydney.edu.au';
+  check(await page.$eval('#notice a[href="mailto:' + LAW_ENQUIRY + '"]', a => a.textContent.trim()) === LAW_ENQUIRY, 'the notice should link the Law Enquiry Team email');
+  check(/2026 Handbook/.test(await page.textContent('#notice')), 'the notice should point current students to the 2026 Handbook');
+  check(docB.includes(LAW_ENQUIRY), 'the PDF disclaimer should carry the Law Enquiry email');
+  const phased = await page.textContent('#notice .phase-grid');
+  check(['LAWS 2004', 'LAWS 1009', 'LAWS 2015', 'LAWS 2001', 'LAWS 4004', 'LAWS 4013'].every(c => phased.includes(c)), 'the notice should list all six subjects being phased out');
+  check(!!(await page.$('#site-foot a[href="mailto:' + LAW_ENQUIRY + '"]')), 'the footer should link the Law Enquiry Team');
+
+  // ---------------------------------------------------------------- Summer sessions
+  const sp = await newPage(browser);
+  await sp.goto(APP);
+  await sp.evaluate(() => { localStorage.clear(); WSLSA.select('2788|T046'); });
+  check((await sp.$$('[data-action="summer-add"]')).length === 5, '2788 should offer + Add Summer on each of its five years');
+  // from a WSLSA pathway, Summer opens the setup for an editable copy, then adds the session
+  await sp.click('[data-action="summer-add"][data-y="1"]');
+  await sp.waitForSelector('#setup-form');
+  check(/Summer is planned in your own copy/.test(await sp.textContent('#setup-form')), 'Summer from a pathway should explain the editable copy');
+  await sp.click('button[type=submit][form=setup-form]');
+  await sp.waitForTimeout(200);
+  let sc = await sp.evaluate(() => { const c = WSLSA.context(); const s = c.slots.find(x => x.session === 'Summer'); return { custom: c.custom, total: c.totalCP, id: s && s.id, year: s && s.year, pending: s && s.pending }; });
+  check(sc.custom && sc.year === 1 && sc.pending && sc.total === 410, `Summer should add one open 10 CP slot to Year 1 of a custom copy, got ${JSON.stringify(sc)}`);
+  check((await sp.$$('#year-1 .session-summer')).length === 1 && !(await sp.$('#year-1 [data-action="summer-add"]')), 'Year 1 should show its Summer session and drop the add button');
+  // bringing a later subject forward fills the Summer slot and keeps the plan's credit points
+  await sp.click(`#slot-${sc.id} [data-action="picker-open"]`);
+  await sp.waitForSelector('#pick-results');
+  check(!(await sp.$('.chip[data-action="pick-off"]')), 'a Summer slot should not offer the not-offered-this-session filter');
+  check((await sp.$$eval('#cp-move option', os => os.filter(o => /Summer/.test(o.textContent)).length)) >= 5, 'Move to should list a Summer session for each year');
+  const from = await sp.$eval('[data-action="cbring"]', b => b.dataset.from);
+  const fromCode = await sp.evaluate(id => WSLSA.context().byId[id].code, from);
+  await sp.click('[data-action="cbring"]');
+  await sp.waitForTimeout(200);
+  sc = await sp.evaluate(() => { const c = WSLSA.context(); const s = c.slots.find(x => x.session === 'Summer'); return { total: c.totalCP, placed: c.placedCP, code: s.code, offer: s.offer, risks: c.risks.summer.length }; });
+  check(sc.code === fromCode && sc.total === 400 && sc.offer === null && sc.risks === 1, `bringing ${fromCode} forward should move it into Summer at 400 CP, got ${JSON.stringify(sc)}`);
+  check(/1 in Summer to check/.test(await sp.textContent('#advisory-box summary')) && /lawenquiry@westernsydney\.edu\.au/.test(await sp.textContent('#advisory')), 'the advisory should flag the Summer subject and give the Law Enquiry contact');
+  check(/Check Handbook/.test(await sp.textContent('#grid .session-summer')), 'Summer subjects should point to the Handbook instead of campus pills');
+  // plan links keep Summer, and Summer survives the part-time view and the PDF
+  const summerUrl = await sp.evaluate(() => location.href);
+  const sp2 = await newPage(browser);
+  await sp2.goto(summerUrl);
+  check(await sp2.evaluate(c => WSLSA.custom().slots.some(x => x.s === 'Summer' && x.y === 1 && x.code === c), fromCode), 'a plan link should restore the Summer subject');
+  await sp.click('[data-action="load"][data-load="PT"]');
+  check(!/undefined|null|NaN|\[object/.test(await sp.textContent('#grid')) && (await sp.$$('.session-summer')).length === 1, 'the part-time view should keep the Summer session');
+  await sp.click('[data-action="load"][data-load="FT"]');
+  const summerDoc = await sp.evaluate(() => WSLSA.buildPrintDoc({ mode: 'A', orient: 'portrait' }));
+  check(summerDoc.includes('pd-t-summer') && /<b>Summer:<\/b>/.test(summerDoc), 'the PDF should print the Summer table and its check');
+  // adding Summer inside a custom plan needs no setup step; open slots never land in Summer
+  await sp.click('[data-action="summer-add"][data-y="3"]');
+  check(await sp.evaluate(() => WSLSA.custom().slots.filter(x => x.s === 'Summer').length) === 2 && !(await sp.$('#setup-form')), 'Summer in a custom plan should add the session straight away');
+  await sp.evaluate(() => { WSLSA.select('2848|BASE'); });
+  check(await sp.evaluate(() => !WSLSA.context().custom && !WSLSA.context().slots.some(s => s.session === 'Summer')), 'WSLSA pathways should stay free of Summer slots');
+  check(sp.errors.length === 0 && sp2.errors.length === 0, 'Summer console errors: ' + sp.errors.concat(sp2.errors).join('; '));
+  await sp.close();
+  await sp2.close();
+
   // ---------------------------------------------------------------- mobile layout
   const m = await newPage(browser, { viewport: { width: 390, height: 844 } });
   await m.goto(APP);

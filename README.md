@@ -16,11 +16,15 @@ A free tool from the Western Sydney Law Students' Association. It works on your 
 
 Want something different from the recommended pathway? Choose **Customise this pathway** to edit it, or **Build my own** to start from scratch.
 
+Planning to study over Summer? Press **+ Add Summer** on any year. You can choose a new subject for that Summer or bring one forward from later in your plan. The 2027 guides only cover Autumn and Spring, so check in the Handbook that each Summer subject runs and where.
+
 ## Good to know
 
 Your plan saves automatically in your browser, and nothing you enter is sent to WSLSA or anyone else. If you switch devices or clear your browser, open your share link to get your plan back.
 
-The recommended pathways are prepared by WSLSA and are not official Western Sydney University sequences. Always confirm your enrolment, prerequisites and any flagged issues with your Academic Program Advisor, and check the 2027 Handbook for subjects still marked TBC.
+This explorer follows the 2027 Handbook, which reflects the School of Law's new curriculum for students starting in 2027. If you started your degree before 2027, the School of Law advises planning and enrolling in your 2027 subjects with the 2026 Handbook.
+
+The recommended pathways are prepared by WSLSA and are not official Western Sydney University sequences. Always confirm your enrolment, prerequisites and any flagged issues with your Academic Program Advisor, and check the 2027 Handbook for subjects still marked TBC. For further guidance on your enrolment, contact the Law Enquiry Team at [lawenquiry@westernsydney.edu.au](mailto:lawenquiry@westernsydney.edu.au).
 
 Spotted an error? Let WSLSA know through [wslsa.com.au](https://wslsa.com.au/).
 

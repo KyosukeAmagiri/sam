@@ -11,7 +11,11 @@
   const CAMPUS_NAMES = Object.assign({}, META.campuses, { TBC: 'Session not yet published for 2027' });
   const PRIMARY_CAMPUSES = ['PS', 'CA', 'PC', 'HA', 'BC', 'PE', 'LC'];
   const SESSIONS = ['Autumn', 'Spring'];
+  // Students can add a Summer session after Spring in any year of their own plan. The 2027 guides
+  // publish Autumn and Spring offerings only, so Summer subjects carry no session or campus data.
+  const PLAN_SESSIONS = ['Autumn', 'Spring', 'Summer'];
   const LOAD_CP = { FT: 40, PT: 20 };
+  const LAW_ENQUIRY = 'lawenquiry@westernsydney.edu.au';
 
   const DEG = {};
   const GLOBAL_BY_CODE = {}; // every subject in the workbook, across all degrees
@@ -107,12 +111,12 @@
   function sessionValue(entry, session) { return session === 'Autumn' ? entry.autumn : entry.spring; }
   function offerFor(deg, code, session) {
     const e = deg.byCode[code] || GLOBAL_BY_CODE[code];
-    if (!e) return null;
+    if (!e || session === 'Summer') return null;
     const info = parseOffered(sessionValue(e, session));
     if (e.source && /^2026/.test(e.source)) info.y2026 = true;
     return info;
   }
-  function orderIdx(y, s) { return (y - 1) * 2 + (s === 'Spring' ? 1 : 0); }
+  function orderIdx(y, s) { return (y - 1) * 3 + PLAN_SESSIONS.indexOf(s); }
   function where(s) { return 'Year ' + s.year + ' ' + s.session; }
   function fmt(n) { return String(Math.round(n * 10) / 10); }
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
@@ -270,7 +274,7 @@
   function sanitiseCSlot(x, tpl) {
     if (!x || typeof x !== 'object') return null;
     const y = Math.floor(+x.y);
-    if (!(y >= 1 && y <= MAX_YEARS) || SESSIONS.indexOf(x.s) < 0) return null;
+    if (!(y >= 1 && y <= MAX_YEARS) || PLAN_SESSIONS.indexOf(x.s) < 0) return null;
     const typed = str(x.code, 16).trim().toUpperCase().replace(/\s+/g, ' ');
     const code = normCode(typed) || typed;
     const known = GLOBAL_BY_CODE[code] || EXTRA_BY_CODE[code];
@@ -337,12 +341,12 @@
   // ---- shareable URL hash: #plan=<base64url(JSON)>
   function b64enc(s) { return btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
   function b64dec(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return decodeURIComponent(escape(atob(s))); }
-  // custom plans travel as compact rows: [year, 0 Autumn / 1 Spring, code, CP, flags (1 = done), template slot, typed title]
+  // custom plans travel as compact rows: [year, 0 Autumn / 1 Spring / 2 Summer, code, CP, flags (1 = done), template slot, typed title]
   function packCustom(c) {
     return {
       n: c.name, k: c.code, p: c.cp, tp: c.tpl,
       s: c.slots.map(function (x) {
-        const r = [x.y, x.s === 'Spring' ? 1 : 0, x.code, x.cp, x.done ? 1 : 0, x.o, x.title];
+        const r = [x.y, PLAN_SESSIONS.indexOf(x.s), x.code, x.cp, x.done ? 1 : 0, x.o, x.title];
         while (r.length > 4 && !r[r.length - 1]) r.pop();
         return r;
       }),
@@ -353,7 +357,7 @@
     return sanitiseCustom({
       name: o.n, code: o.k, cp: o.p, tpl: o.tp,
       slots: o.s.map(function (r) {
-        return Array.isArray(r) ? { y: r[0], s: r[1] === 1 ? 'Spring' : 'Autumn', code: r[2], cp: r[3], done: (r[4] & 1) === 1, o: r[5], title: r[6] } : null;
+        return Array.isArray(r) ? { y: r[0], s: PLAN_SESSIONS[r[1]] || 'Autumn', code: r[2], cp: r[3], done: (r[4] & 1) === 1, o: r[5], title: r[6] } : null;
       }),
     });
   }
@@ -497,12 +501,13 @@
       listSubject: false, code: filled ? x.code : null, title: null, offer: null, tbcFlag: false, replaced: null, cardClass: 'k-slot',
     };
     if (filled) {
-      if (same) { s.title = orig.title; s.offer = parseOffered(orig.offered); }
+      // a template subject keeps its pathway offering only while it stays in its original session
+      if (same) { s.title = orig.title; s.offer = x.s === orig.session ? parseOffered(orig.offered) : offerFor(deg, x.code, x.s); }
       else if (GLOBAL_BY_CODE[x.code]) {
         s.title = GLOBAL_BY_CODE[x.code].title;
         s.offer = offerFor(deg, x.code, x.s);
         const io = orig && orig.kind === 'inline' ? orig.options.find(function (o) { return o.code === x.code; }) : null;
-        if (io && io.tbcFlag) { s.offer.tbc = true; s.tbcFlag = true; }
+        if (io && io.tbcFlag && s.offer) { s.offer.tbc = true; s.tbcFlag = true; }
       } else if (EXTRA_BY_CODE[x.code]) { s.title = EXTRA_BY_CODE[x.code].title; s.listSubject = true; }
       else { s.title = x.title; s.custom = true; }
     } else {
@@ -566,11 +571,12 @@
       load[k] = (load[k] || 0) + x.cp;
       idx = Math.max(idx, k);
     });
+    // open slots only ever go into Autumn and Spring; Summer is the student's own choice
     while (cap < plan.cp && plan.slots.length < MAX_SLOTS) {
-      while ((load[idx] || 0) + 10 > LOAD_CP.FT) idx++;
-      const y = Math.floor(idx / 2) + 1;
+      while (PLAN_SESSIONS[idx % 3] === 'Summer' || (load[idx] || 0) + 10 > LOAD_CP.FT) idx++;
+      const y = Math.floor(idx / 3) + 1;
       if (y > MAX_YEARS) break;
-      plan.slots.push(emptyCSlot(y, SESSIONS[idx % 2]));
+      plan.slots.push(emptyCSlot(y, PLAN_SESSIONS[idx % 3]));
       load[idx] = (load[idx] || 0) + 10;
       cap += 10;
     }
@@ -643,8 +649,9 @@
       });
     }
     const pending = ctx.slots.filter(function (s) { return s.pending; });
-    const unlisted = ctx.slots.filter(function (s) { return s.listSubject || s.custom; });
-    const r = { unlisted: unlisted, advisor: advisor, tbc: tbc, y2026: y2026, notOffered: notOffered, campus: campus, onlineOnly: onlineOnly, pending: pending, dupes: [], overload: [], replaced: [], cpShort: 0, cpOver: 0 };
+    const summer = ctx.slots.filter(function (s) { return s.session === 'Summer' && !s.pending; });
+    const unlisted = ctx.slots.filter(function (s) { return (s.listSubject || s.custom) && s.session !== 'Summer'; });
+    const r = { unlisted: unlisted, summer: summer, advisor: advisor, tbc: tbc, y2026: y2026, notOffered: notOffered, campus: campus, onlineOnly: onlineOnly, pending: pending, dupes: [], overload: [], replaced: [], cpShort: 0, cpOver: 0 };
     if (ctx.custom) {
       r.dupes = Object.keys(ctx.used).filter(function (c) { return ctx.used[c].length > 1; })
         .map(function (c) { return { code: c, slots: ctx.used[c].map(function (id) { return ctx.byId[id]; }) }; });
@@ -668,7 +675,7 @@
   function timeline(ctx, load) {
     const years = {};
     function slotIn(y, sess, s) {
-      years[y] = years[y] || { year: y, Autumn: [], Spring: [] };
+      years[y] = years[y] || { year: y, Autumn: [], Spring: [], Summer: [] };
       years[y][sess].push(s);
     }
     if (load !== 'PT') {
@@ -780,6 +787,7 @@
 
   function customWhy(ctx) {
     return '<b>Your own progression.</b> Set the credit points your degree needs, then fill each session with any WSU subject. Subjects from the 2027 WSLSA guides show their published sessions and campuses; subjects from the WSU subject list or typed in yourself need checking in the Handbook.' +
+      ' Add a Summer session to any year to take a subject over the break or bring one forward; the guides have no Summer data, so check each Summer subject in the Handbook.' +
       (ctx.tdeg ? ' This plan started from the ' + esc(tplLabel(ctx.plan.tpl)) + ' pathway, and anything you change or choose turns gold.' : '') +
       ' A custom plan is not a WSLSA recommendation, so confirm it with the Academic Program Advisor before you enrol.';
   }
@@ -883,7 +891,7 @@
   function renderAdvisory(ctx) {
     const r = ctx.risks;
     const sev = r.advisor.length || r.dupes.length || (ctx.custom && r.notOffered.length) ? 'adv-crit'
-      : (r.tbc.length || r.campus.length || r.notOffered.length || r.overload.length || r.cpShort || r.cpOver) ? 'adv-warn' : 'adv-ok';
+      : (r.tbc.length || r.campus.length || r.notOffered.length || r.overload.length || r.cpShort || r.cpOver || r.summer.length) ? 'adv-warn' : 'adv-ok';
     const parts = [];
     if (ctx.custom) parts.push('<b>' + ctx.placedCP + ' / ' + ctx.plan.cp + '</b> CP placed');
     if (r.advisor.length) parts.push('<b>' + plural(r.advisor.length, 'prerequisite note') + '</b>');
@@ -893,6 +901,7 @@
     if (r.tbc.length) parts.push('<b>' + r.tbc.length + '</b> ' + (r.tbc.length === 1 ? 'subject has' : 'subjects have') + ' 2027 sessions TBC');
     if (r.pending.length) parts.push('<b>' + r.pending.length + '</b> ' + (ctx.custom ? (r.pending.length === 1 ? 'open slot' : 'open slots') : (r.pending.length === 1 ? 'choice' : 'choices') + ' still open'));
     if (state.campus && r.campus.length) parts.push('<b>' + r.campus.length + '</b> not at ' + esc(META.campuses[state.campus]) + ' or online');
+    if (r.summer.length) parts.push('<b>' + r.summer.length + '</b> in Summer to check');
     if (r.y2026.length) parts.push(r.y2026.length + ' using 2026 session data');
     if (!parts.length) parts.push('Nothing flagged for this selection');
 
@@ -929,6 +938,7 @@
         }).join('') + '</div></section>');
     }
     const checks = [];
+    if (r.summer.length) checks.push('<p><b>Summer subjects:</b> ' + r.summer.map(function (s) { return jump(s) + ' (' + where(s) + ')'; }).join(', ') + '. The 2027 guides list Autumn and Spring sessions only, so confirm in the Handbook that each subject runs in Summer and where. For help planning Summer study, contact the Law Enquiry Team at <a href="mailto:' + LAW_ENQUIRY + '">' + LAW_ENQUIRY + '</a>.</p>');
     if (state.campus && r.campus.length) checks.push('<p><b>Not at ' + esc(META.campuses[state.campus]) + ' or online:</b> ' + r.campus.map(function (s) { return '<button type="button" class="linkish" data-action="jump" data-slot="' + s.id + '">' + esc(s.code) + '</button> (' + s.offer.codes.join(' ') + ', ' + where(s) + ')'; }).join('; ') + '.</p>');
     if (state.campus && r.onlineOnly.length) checks.push('<p><b>Online only for you:</b> ' + r.onlineOnly.map(function (s) { return esc(s.code); }).join(', ') + '.</p>');
     if (r.y2026.length) checks.push('<p><b>2026 session data shown:</b> ' + r.y2026.map(function (s) { return esc(s.code) + ' ' + esc(s.title) + ' (' + where(s) + ')'; }).join('; ') + '.</p>');
@@ -1004,7 +1014,8 @@
         (s.pick ? '<button type="button" class="text-btn" data-action="clear" data-slot="' + s.id + '">Reset to WSLSA pick</button>' : '') + '</div>';
     }
     if (s.kind === 'cslot') {
-      if (s.pending && s.raw.kind === 'llb') body += '<div class="subj-note">Template slot: any LLB Alternate offered in ' + s.session + ' 2027.</div>';
+      if (s.pending && s.session === 'Summer') body += '<div class="subj-note">' + (s.raw.kind === 'llb' ? 'Template slot: any LLB Alternate that runs in Summer. ' : '') + 'Choose a subject, or bring one forward from later in your plan.</div>';
+      else if (s.pending && s.raw.kind === 'llb') body += '<div class="subj-note">Template slot: any LLB Alternate offered in ' + s.session + ' 2027.</div>';
       if (s.pending && s.raw.kind === 'inline') body += '<div class="subj-note">Template options: ' + s.raw.options.map(function (o) { return esc(o.code + ' ' + o.title); }).join(' or ') + '.</div>';
       body += s.pending
         ? '<div class="subj-actions"><button type="button" class="select-btn" data-action="picker-open" data-slot="' + s.id + '">+ Choose subject →</button><button type="button" class="text-btn" data-action="cremove" data-slot="' + s.id + '">Remove slot</button></div>'
@@ -1017,7 +1028,9 @@
     return '<div class="' + cls.join(' ') + '" id="slot-' + s.id + '" data-slot="' + s.id + '">' +
       '<div class="subj-lead">' + check + '<span class="code-pill">' + esc(codeTxt) + '</span></div>' +
       '<div class="subj-main"><div class="subj-title">' + esc(s.title) + '</div><div class="subj-meta"><span class="cat">' + esc(s.typeLabel) + '</span>' + flags.join('') + '</div>' + body + '</div>' +
-      '<div class="subj-side"><span class="pills">' + (s.pending ? '' : s.listSubject ? '<span class="muted small" title="The WSU subject list has no session or campus data">Check Handbook</span>' : pillsFor(s.offer)) + '</span><span class="cp-badge">' + s.cp + ' CP</span></div></div>';
+      '<div class="subj-side"><span class="pills">' + (s.pending ? ''
+        : s.session === 'Summer' ? '<span class="muted small" title="The 2027 guides list Autumn and Spring sessions only">Check Handbook</span>'
+        : s.listSubject ? '<span class="muted small" title="The WSU subject list has no session or campus data">Check Handbook</span>' : pillsFor(s.offer)) + '</span><span class="cp-badge">' + s.cp + ' CP</span></div></div>';
   }
 
   function sortSlots(list) {
@@ -1031,19 +1044,24 @@
     let html = pt ? '<p class="pt-note"><b>Part-time view (indicative).</b> Each full-time session is split into two 20 CP sessions, keeping every subject in the session type it is offered in. This lengthens the pathway to about ' + fmt(ctx.deg.ptYears) + ' years and can shift prerequisite timing, so confirm your sequence with the Academic Program Advisor.' + (ctx.custom ? ' Switch to Full-time to add, remove or move slots.' : '') + '</p>' : '';
     const edit = ctx.custom && !pt;
     years.forEach(function (y) {
-      const lists = { Autumn: sortSlots(y.Autumn), Spring: sortSlots(y.Spring) };
-      const all = lists.Autumn.concat(lists.Spring);
+      const lists = { Autumn: sortSlots(y.Autumn), Spring: sortSlots(y.Spring), Summer: sortSlots(y.Summer) };
+      const all = lists.Autumn.concat(lists.Spring, lists.Summer);
+      const sessions = lists.Summer.length ? PLAN_SESSIONS : SESSIONS;
       const R = roman(y.year);
+      // Summer is planned in the student's own copy of a pathway, so in the WSLSA guide this button starts one
+      const addSummer = !pt && !lists.Summer.length
+        ? '<button type="button" class="summer-add" data-action="summer-add" data-y="' + y.year + '" title="' + (ctx.custom ? 'Add a Summer session after Spring in Year ' + y.year : 'Add a Summer session to Year ' + y.year + ' in your own editable copy of this pathway') + '">+ Add Summer</button>'
+        : '';
       html += '<article class="year" id="year-' + y.year + '" aria-label="Year ' + y.year + '">' +
         '<header class="year-bar" data-roman="' + R + '"><span class="year-seal" aria-hidden="true">' + R + '</span>' +
-        '<h2>Year ' + y.year + (pt ? '<small>Part-time</small>' : '') + '</h2>' +
-        '<div class="year-cp"><b>' + sumCP(lists.Autumn) + ' CP</b> Autumn · <b>' + sumCP(lists.Spring) + ' CP</b> Spring<span class="done">' + sumCP(all, true) + ' / ' + sumCP(all) + ' CP completed</span></div></header>' +
+        '<h2>Year ' + y.year + (pt ? '<small>Part-time</small>' : '') + '</h2>' + addSummer +
+        '<div class="year-cp"><b>' + sumCP(lists.Autumn) + ' CP</b> Autumn · <b>' + sumCP(lists.Spring) + ' CP</b> Spring' + (lists.Summer.length ? ' · <b>' + sumCP(lists.Summer) + ' CP</b> Summer' : '') + '<span class="done">' + sumCP(all, true) + ' / ' + sumCP(all) + ' CP completed</span></div></header>' +
         '<div class="sessions">';
-      SESSIONS.forEach(function (sess) {
+      sessions.forEach(function (sess) {
         const list = lists[sess];
         const allDone = list.length && list.every(function (s) { return s.done; });
         const over = ctx.custom && !pt && sumCP(list) > LOAD_CP.FT;
-        html += '<section class="session" aria-label="' + sess + ' session"><div class="session-head"><h3>' + sess + '<span>Session</span></h3><div class="session-tools">' +
+        html += '<section class="session' + (sess === 'Summer' ? ' session-summer' : '') + '" aria-label="' + sess + ' session"><div class="session-head"><h3>' + sess + '<span>Session</span></h3><div class="session-tools">' +
           (edit ? '<button type="button" class="mark-all add-slot" data-action="cadd" data-y="' + y.year + '" data-s="' + sess + '">+ Add slot</button>' : '') +
           (list.length ? '<button type="button" class="mark-all" data-action="session-done" data-ids="' + list.map(function (s) { return s.id; }).join(',') + '">' + (allDone ? 'Unmark all' : 'Mark all done') + '</button>' : '') +
           '<span class="session-cp' + (over ? ' over' : '') + '"' + (over ? ' title="More than the 40 CP full-time load"' : '') + '>' + sumCP(list) + ' CP</span></div></div><div class="slots">' +
@@ -1189,7 +1207,30 @@
     const ex = META.explorerIntro.match(/Pathways are[^.]*\./);
     const sheet = DEGREES[0].sheetIntro.match(/The recommended pathway[^]*$/);
     const src = META.overviewNote.match(/^Source:[^]*?Degree Guides\./);
-    return [sheet ? sheet[0] : '', ex ? ex[0] : '', src ? src[0] : '', 'Confirm enrolment decisions, prerequisites and any flagged gaps with the Academic Program Advisor.'].filter(Boolean).join(' ');
+    return [sheet ? sheet[0] : '', ex ? ex[0] : '', src ? src[0] : '',
+      'Confirm enrolment decisions, prerequisites and any flagged gaps with the Academic Program Advisor, and for further guidance contact the Law Enquiry Team at ' + LAW_ENQUIRY + '.',
+      'If you started your degree before 2027, plan your 2027 subjects with the 2026 Handbook, which reflects the curriculum for your course.'].filter(Boolean).join(' ');
+  }
+  // From the School of Law's announcement to current students, 26 October 2026: final offering of each subject.
+  const PHASE_OUT = [
+    [2027, [['LAWS 2004', 'Criminal Law'], ['LAWS 1009', 'Legal Analysis and Critique']]],
+    [2028, [['LAWS 2015', 'Professional Responsibility and Legal Ethics'], ['LAWS 2001', 'Alternative Dispute Resolution']]],
+    [2029, [['LAWS 4004', 'Criminal Procedure and Evidence'], ['LAWS 4013', 'Civil Procedure and Arbitration']]],
+  ];
+  // rendered once at boot: the content never changes, and re-rendering would close the details panel
+  function renderNotice() {
+    $('#notice').innerHTML = '<div class="notice-card"><div class="notice-main">' +
+      '<p class="kicker">School of Law update <i>·</i> 26 October 2026</p>' +
+      '<h3>Started your law degree before 2027?</h3>' +
+      '<p>This explorer follows the 2027 Handbook, which reflects the School of Law\'s new curriculum for students starting in 2027. If you are a current student, the School of Law advises choosing the <b>2026 Handbook</b> when you plan and enrol in your 2027 subjects, as it reflects the requirements of your course.</p></div>' +
+      '<div class="notice-contact"><span class="field-label">Need guidance?</span><p>For further guidance on planning your enrolment, contact the Law Enquiry Team.</p>' +
+      '<a class="tbtn tbtn-outline notice-mail" href="mailto:' + LAW_ENQUIRY + '">' + LAW_ENQUIRY + '</a></div>' +
+      '<details class="notice-more"><summary>Subjects being phased out</summary>' +
+      '<p>If you fail one of these subjects, or have not completed it in the correct order, enrol in its next available offering. Each is listed under the year of its final offering.</p>' +
+      '<div class="phase-grid">' + PHASE_OUT.map(function (p) {
+        return '<div><b>' + p[0] + '</b>' + p[1].map(function (s) { return '<span><code>' + s[0] + '</code> ' + esc(s[1]) + '</span>'; }).join('') + '</div>';
+      }).join('') + '</div>' +
+      '<p>Remedies (LAWS 4014) runs in Autumn and Spring 2027, then once a year from 2028, so its session in a later year of your pathway may change.</p></details></div>';
   }
   const CREST = '<span class="crest-img pd-crest" role="img" aria-label="WSLSA crest"></span>';
   const FOOT_LINE = '© 2026 Western Sydney Law Students\' Association Inc. <i>·</i> Building EK, Parramatta South Campus <i>·</i> By students, for students';
@@ -1198,7 +1239,7 @@
     $('#site-foot').innerHTML = '<span class="foot-watermark crest-rev" aria-hidden="true"></span><div class="foot-inner">' +
       '<div class="foot-brand"><span class="crest-rev foot-crest" role="img" aria-label="WSLSA crest"></span><div><p class="foot-sub">Western Sydney</p><p class="foot-name">Law Students\' Association</p><p class="foot-tag">Est. 1996 · By students, for students</p></div></div>' +
       '<div class="foot-col"><h4>Your plan</h4><p>Choices and progress are saved in this browser only and are never uploaded. To continue on another phone or computer, use Copy Share Link and open that link there.</p>' +
-      '<div class="foot-links"><a href="' + esc(ctx.deg.handbook) + '" target="_blank" rel="noopener">Official 2027 Handbook →</a><a href="https://wslsa.com.au/" target="_blank" rel="noopener">wslsa.com.au →</a></div></div>' +
+      '<div class="foot-links"><a href="' + esc(ctx.deg.handbook) + '" target="_blank" rel="noopener">Official 2027 Handbook →</a><a href="mailto:' + LAW_ENQUIRY + '">Email the Law Enquiry Team →</a><a href="https://wslsa.com.au/" target="_blank" rel="noopener">wslsa.com.au →</a></div></div>' +
       '<div class="foot-col"><h4>Official handbook disclaimer</h4><p>' + esc(disclaimerText()) + '</p></div>' +
       '</div><div class="foot-base">' + FOOT_LINE + '</div>';
   }
@@ -1280,6 +1321,7 @@
   function closeModal() {
     ui.modal = null;
     ui.picker = null;
+    ui.setupSummer = 0;
     $('#modal-root').innerHTML = '';
     document.body.style.overflow = '';
   }
@@ -1452,15 +1494,18 @@
     const ctx = lastCtx;
     const s = ctx.byId[ui.picker.slotId];
     const p = ui.picker;
+    const summer = s.session === 'Summer';
     let tools = '<div class="tool-row"><input class="input" id="pick-q" type="search" placeholder="Search any WSU subject by code or title, e.g. LAWS1001 or contract" value="' + esc(p.q) + '" style="flex:1;min-width:200px" aria-label="Search subjects"></div><div class="tool-row">';
-    if (state.campus) tools += '<button type="button" class="chip" data-action="pick-campus" aria-pressed="' + p.campusOnly + '">' + esc(META.campuses[state.campus]) + ' or online only</button>';
+    // the guides have no Summer sessions or campuses, so those filters would have nothing to filter
+    if (state.campus && !summer) tools += '<button type="button" class="chip" data-action="pick-campus" aria-pressed="' + p.campusOnly + '">' + esc(META.campuses[state.campus]) + ' or online only</button>';
     ['Level 1', 'Level 2', 'Level 3', 'Level 4'].forEach(function (l) { tools += '<button type="button" class="chip" data-action="pick-level" data-level="' + l + '" aria-pressed="' + (p.level === l) + '">' + l + '</button>'; });
     tools += '<button type="button" class="chip" data-action="pick-ug" aria-pressed="' + p.ugOnly + '" title="Hide level 0 and level 5 to 9 subjects">Undergraduate levels 1–4</button>';
-    tools += '<button type="button" class="chip" data-action="pick-off" aria-pressed="' + p.showOff + '">Show subjects not offered in ' + s.session + '</button></div>';
+    if (!summer) tools += '<button type="button" class="chip" data-action="pick-off" aria-pressed="' + p.showOff + '">Show subjects not offered in ' + s.session + '</button>';
+    tools += '</div>';
     const maxY = Math.min(MAX_YEARS, ctx.slots.reduce(function (m, x) { return Math.max(m, x.year); }, 1) + 1);
     let moveOpts = '';
     for (let y = 1; y <= maxY; y++) {
-      SESSIONS.forEach(function (ss) { moveOpts += '<option value="' + y + '|' + ss + '"' + (y === s.year && ss === s.session ? ' selected' : '') + '>Year ' + y + ' · ' + ss + '</option>'; });
+      PLAN_SESSIONS.forEach(function (ss) { moveOpts += '<option value="' + y + '|' + ss + '"' + (y === s.year && ss === s.session ? ' selected' : '') + '>Year ' + y + ' · ' + ss + '</option>'; });
     }
     const typedCP = s.custom ? s.cp : s.cp > 0 ? s.cp : 10;
     const custom = '<div class="pick-section"><h4>Not on the list? Enter it yourself</h4><form class="custom-form cf-cp" id="custom-form">' +
@@ -1484,7 +1529,10 @@
     const s = ctx.byId[ui.picker.slotId];
     const p = ui.picker;
     const q = normQ(p.q);
+    const summer = s.session === 'Summer';
     const other = s.session === 'Autumn' ? 'Spring' : 'Autumn';
+    // a Summer slot shows each subject's Autumn and Spring sessions for context
+    const others = summer ? SESSIONS : [other];
     const offOf = function (e) { return GLOBAL_BY_CODE[e.code] ? offerFor(ctx.deg, e.code, s.session) : null; };
     let hiddenOff = 0;
     let hiddenCampus = 0;
@@ -1518,17 +1566,34 @@
       const current = s.code === e.code && !s.pending;
       const clash = !current && usedElsewhere(ctx, e.code, s.id);
       const g = ctx.deg.byCode[e.code] || GLOBAL_BY_CODE[e.code];
-      const otherVal = g ? sessionValue(g, other) : '';
+      const otherVals = others.map(function (o) { const v = g ? sessionValue(g, o) : ''; return v && v !== '—' ? '<span>' + o + ': ' + esc(v) + '</span>' : ''; }).join('');
       return '<button type="button" class="pick" data-action="cpick" data-code="' + esc(e.code) + '"' + (clash ? ' disabled' : '') + (current ? ' aria-current="true"' : '') + '>' +
         '<span class="p-code">' + hlCode(e.code, q) + '</span><span class="p-title">' + hl(e.title, q) + '</span>' +
         '<span class="p-side">' + (i.off ? '<span class="pills">' + pillsFor(i.off) + '</span>' : '<span class="muted small">Check Handbook</span>') +
         (badge ? '<span class="status status-best">' + badge + '</span>' : '') + (current ? '<span class="status status-essential">Selected</span>' : clash ? '<span class="status status-non">In plan</span>' : '') + '</span>' +
         '<span class="p-meta"><span>' + esc(e.level || 'Level ' + e.code.charAt(5)) + '</span><span>' + (g ? '2027 Handbook data' : 'WSU subject list') + '</span>' +
-        (g && g.cp !== 10 ? '<span>' + g.cp + ' CP</span>' : '') + (otherVal && otherVal !== '—' ? '<span>' + other + ': ' + esc(otherVal) + '</span>' : '') +
+        (g && g.cp !== 10 ? '<span>' + g.cp + ' CP</span>' : '') + otherVals +
         (i.off && i.off.none ? '<span>Not offered in ' + s.session + '</span>' : '') + '</span></button>';
     }
     const notBest = function (i) { return i.e.code !== bestCode; };
     let html = '';
+    if (summer) {
+      html += '<p class="pick-hint summer-hint">The 2027 guides list Autumn and Spring sessions only. Before you plan on a Summer subject, check in the Handbook that it runs in Summer and where.</p>';
+      // taking a later subject over Summer: moving it here keeps the plan's credit points the same
+      if (s.pending) {
+        const later = ctx.slots.filter(function (x) { return !x.pending && orderIdx(x.year, x.session) > orderIdx(s.year, s.session); });
+        const hits = q ? rankByQuery(later, q) : sortSlots(later);
+        if (later.length) {
+          html += '<div class="pick-section"><h4><span>Bring forward from later in your plan</span><span>' + hits.length + '</span></h4><div class="pick-list">' +
+            (hits.length ? hits.map(function (x) {
+              return '<button type="button" class="pick" data-action="cbring" data-from="' + x.id + '">' +
+                '<span class="p-code">' + hlCode(x.code, q) + '</span><span class="p-title">' + hl(x.title, q) + '</span>' +
+                '<span class="p-side"><span class="status status-non">' + where(x) + '</span></span>' +
+                '<span class="p-meta"><span>Moves here from ' + where(x) + '</span><span>' + x.cp + ' CP</span></span></button>';
+            }).join('') : '<div class="pick-empty">No later subjects in your plan match “' + esc(p.q.trim()) + '”.</div>') + '</div></div>';
+        }
+      }
+    }
     if (best) {
       const badge = best.score >= 950 ? 'Exact match' : 'Best match';
       html += '<div class="pick-section pick-best"><h4><span>' + badge + '</span></h4><div class="pick-list">' + crow(best.i, badge) + '</div>' +
@@ -1634,9 +1699,11 @@
       return '<label class="opt-card"><input type="radio" name="cs-start" value="' + val + '"' + (start === val ? ' checked' : '') + '><b>' + title + '</b><span>' + desc + '</span></label>';
     };
     ui.modal = 'setup';
+    ui.setupSummer = opts.summerYear || 0;
     $('#modal-root').innerHTML = '<div class="modal-backdrop" data-action="backdrop"><div class="modal modal-setup" role="dialog" aria-modal="true" aria-labelledby="setup-h">' +
-      '<div class="modal-head"><div><h2 id="setup-h">' + (plan ? 'Edit your custom degree' : 'Build your own degree') + '</h2><p>Set the credit points your degree requires, name it, then start from empty slots or from a 2027 WSLSA pathway you can edit subject by subject.</p></div><button type="button" class="modal-x" data-action="modal-close" aria-label="Close">×</button></div>' +
+      '<div class="modal-head"><div><h2 id="setup-h">' + (ui.setupSummer ? 'Add a Summer session' : plan ? 'Edit your custom degree' : 'Build your own degree') + '</h2><p>Set the credit points your degree requires, name it, then start from empty slots or from a 2027 WSLSA pathway you can edit subject by subject.</p></div><button type="button" class="modal-x" data-action="modal-close" aria-label="Close">×</button></div>' +
       '<form class="setup-body" id="setup-form" novalidate>' +
+      (ui.setupSummer ? '<p class="cs-summer"><b>Summer is planned in your own copy of a pathway.</b> Create it below and Year ' + ui.setupSummer + ' Summer is added after Spring, ready for you to choose a subject or bring one forward from later in your plan. The WSLSA pathway itself stays as it is.</p>' : '') +
       '<fieldset><legend><span class="idx">01→</span>Your degree</legend><div class="setup-row">' +
       '<div class="field"><label for="cs-name">Degree name</label><input class="input" id="cs-name" maxlength="120" autocomplete="off" placeholder="e.g. Bachelor of Laws (Graduate Entry)" value="' + esc(name) + '"' + (auto ? ' data-auto="1"' : '') + '></div>' +
       '<div class="field"><label for="cs-code">Course code (optional)</label><input class="input" id="cs-code" maxlength="16" autocomplete="off" placeholder="e.g. 2753" value="' + esc(code) + '"' + (auto ? ' data-auto="1"' : '') + '></div></div></fieldset>' +
@@ -1685,6 +1752,7 @@
     const cpRaw = +$('#cs-cp').value;
     if (!(cpRaw >= 10 && cpRaw <= MAX_CP)) { toast('Enter the credit points your degree requires, between 10 and ' + MAX_CP + '.'); $('#cs-cp').focus(); return; }
     const start = setupStart();
+    const summerY = ui.setupSummer;
     const prev = state.custom;
     const filled = prev ? prev.slots.filter(function (x) { return x.code; }).length : 0;
     if (filled && start !== 'keep' && !window.confirm('Start again? This replaces the ' + plural(filled, 'subject') + ' in your current custom plan.')) return;
@@ -1692,10 +1760,17 @@
     if (start === 'keep' && prev) { plan.tpl = prev.tpl; plan.slots = prev.slots; }
     else if (start === 'template') { plan.tpl = $('#cs-tpl-major').value; plan.slots = templateSlots(plan.tpl, $('#cs-tpl-mine').checked); }
     fitToCP(plan);
+    const addSummer = summerY && plan.slots.length < MAX_SLOTS && !plan.slots.some(function (x) { return x.y === summerY && x.s === 'Summer'; });
+    if (addSummer) plan.slots.push(emptyCSlot(summerY, 'Summer'));
     state.custom = plan;
     state.mode = 'custom';
     closeModal();
     render();
+    if (summerY) {
+      toast(addSummer ? 'Year ' + summerY + ' Summer added. Choose a subject or bring one forward.' : 'Your plan already has a Year ' + summerY + ' Summer session.');
+      if (addSummer) flashSlot('c' + (plan.slots.length - 1));
+      return;
+    }
     const years = plan.slots.reduce(function (m, x) { return Math.max(m, x.y); }, 0);
     toast(start === 'keep' ? 'Custom plan updated: ' + plan.cp + ' CP required.' : 'Custom plan ready: ' + plural(plan.slots.length, 'slot') + ' across ' + plural(years, 'year') + '.');
     const head = $('.section-head');
@@ -1782,7 +1857,7 @@
   }
   function pdTable(sess, list, ticks) {
     const cp = list.reduce(function (a, s) { return a + s.cp; }, 0);
-    let html = '<table class="pd-t"><colgroup>' + (ticks ? '<col class="c-tick">' : '') + '<col class="c-code"><col><col class="c-camp"><col class="c-cp"></colgroup>' +
+    let html = '<table class="pd-t' + (sess === 'Summer' ? ' pd-t-summer' : '') + '"><colgroup>' + (ticks ? '<col class="c-tick">' : '') + '<col class="c-code"><col><col class="c-camp"><col class="c-cp"></colgroup>' +
       '<thead><tr><th colspan="' + (ticks ? 5 : 4) + '">' + sess + ' <span class="pd-sess">Session</span><span class="pd-cpt">' + cp + ' CP</span></th></tr></thead><tbody>';
     if (!list.length) html += '<tr><td class="pd-empty" colspan="' + (ticks ? 5 : 4) + '">No subjects scheduled</td></tr>';
     list.forEach(function (s) {
@@ -1791,7 +1866,7 @@
       if (s.chosen) title = '◆ ' + title;
       html += '<tr class="' + cls + '">' + (ticks ? '<td class="pd-tick">' + (s.done ? '✓' : '') + '</td>' : '') +
         '<td class="pd-code">' + esc(s.pending ? '—' : s.code) + '</td><td class="pd-title">' + title + '</td>' +
-        '<td class="pd-camp">' + (s.pending ? '' : s.listSubject ? '<span class="pp-26">see Handbook</span>' : pdOffer(s.offer)) + '</td><td class="pd-cp">' + s.cp + '</td></tr>';
+        '<td class="pd-camp">' + (s.pending ? '' : s.listSubject || s.session === 'Summer' ? '<span class="pp-26">see Handbook</span>' : pdOffer(s.offer)) + '</td><td class="pd-cp">' + s.cp + '</td></tr>';
     });
     return html + '</tbody></table>';
   }
@@ -1805,8 +1880,9 @@
   function pdGrid(ctx, o) {
     const ticks = o.ticks && ctx.slots.some(function (s) { return s.done; });
     return timeline(ctx, 'FT').map(function (y) {
-      return '<div class="pd-year"><div class="pd-ylabel"><span class="pd-roman">' + roman(y.year) + '</span><span class="pd-yword">Year ' + y.year + '</span></div>' +
-        SESSIONS.map(function (sess) { return pdTable(sess, y[sess].slice().sort(function (a, b) { return a.raw.slot - b.raw.slot; }), ticks); }).join('') + '</div>';
+      const sessions = y.Summer.length ? PLAN_SESSIONS : SESSIONS;
+      return '<div class="pd-year' + (y.Summer.length ? ' has-summer' : '') + '"><div class="pd-ylabel"><span class="pd-roman">' + roman(y.year) + '</span><span class="pd-yword">Year ' + y.year + '</span></div>' +
+        sessions.map(function (sess) { return pdTable(sess, y[sess].slice().sort(function (a, b) { return a.raw.slot - b.raw.slot; }), ticks); }).join('') + '</div>';
     }).join('');
   }
   function pdWarnings(ctx) {
@@ -1828,6 +1904,7 @@
     const tbcText = r.tbc.length ? r.tbc.map(function (s) { return '<b>' + esc(s.code) + '</b> ' + esc(s.title) + ' (' + where(s) + ')'; }).join('; ') : '';
     const lines = [];
     if (tbcText) lines.push('<li><b>Session TBC:</b> ' + tbcText + '. WSU has not yet published the 2027 session; verify closer to enrolment.</li>');
+    if (r.summer.length) lines.push('<li><b>Summer:</b> ' + r.summer.map(function (s) { return esc(s.code) + ' (' + where(s) + ')'; }).join('; ') + '. The 2027 guides list Autumn and Spring sessions only; confirm in the Handbook that these run in Summer.</li>');
     if (r.y2026.length) lines.push('<li><b>2026 session shown:</b> ' + r.y2026.map(function (s) { return esc(s.code) + ' (' + where(s) + ')'; }).join('; ') + '.</li>');
     if (state.campus && r.campus.length) lines.push('<li><b>Not at ' + esc(META.campuses[state.campus]) + ' or online:</b> ' + r.campus.map(function (s) { return esc(s.code) + ' (' + s.offer.codes.join(' ') + ')'; }).join('; ') + '.</li>');
     if (r.unlisted.length) lines.push('<li><b>Check in the Handbook:</b> ' + r.unlisted.map(function (s) { return esc(s.code) + ' (' + where(s) + ')'; }).join('; ') + '. Chosen from the WSU subject list or entered by hand, so no session data is shown.</li>');
@@ -2111,6 +2188,32 @@
         flashSlot(id);
         break;
       }
+      case 'summer-add': {
+        const y = +el.dataset.y;
+        if (!ctx.custom) { openSetup({ start: 'template', tpl: currentKey(), summerYear: y }); break; }
+        const id = addCustomSlot(y, 'Summer');
+        if (!id) break;
+        render();
+        flashSlot(id);
+        toast('Year ' + y + ' Summer added. Choose a subject or bring one forward.');
+        break;
+      }
+      case 'cbring': {
+        // the later subject moves into this Summer slot, and the empty Summer slot it fills is removed
+        const target = ctx.byId[ui.picker.slotId];
+        const from = ctx.byId[el.dataset.from];
+        const slots = state.custom.slots;
+        const moved = slots[from.idx];
+        moved.y = target.year;
+        moved.s = target.session;
+        slots.splice(target.idx, 1);
+        const id = 'c' + slots.indexOf(moved);
+        closeModal();
+        render();
+        toast(from.code + ' brought forward from ' + where(from) + ' to ' + where(target) + '.');
+        flashSlot(id);
+        break;
+      }
       case 'cyear': {
         const y = addCustomYear();
         if (!y) break;
@@ -2254,6 +2357,7 @@
 
   // ======================================================================== boot
   applyHash();
+  renderNotice();
   render();
 
   // test hook: lets the automated checks drive the app without relying on UI layout

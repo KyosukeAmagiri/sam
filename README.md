@@ -14,6 +14,8 @@ A free tool from the Western Sydney Law Students' Association. It works on your 
 4. **Check the advisory notes** above your pathway. They flag prerequisite gaps, subjects whose 2027 sessions aren't published yet, and anything to raise with an advisor.
 5. **Save your plan.** Press **Print / Save PDF** for a printable guide, or **PDF Options** to choose the layout first. **Copy Share Link** gives you a link that opens your exact plan on any device, with a fresh, unique code every time you copy it.
 
+Already studying? Tick subjects as you pass them, or press **Tick off from my results** and paste your academic record to tick them all at once (anything that looks like a fail is left for you to check). **Next to enrol** then shows your next session with a **Copy subject codes** button for enrolment day, and the facts at the top show when you're on track to finish.
+
 Want something different from the recommended pathway? Choose **Customise this pathway** to edit it, or **Build my own** to start from scratch.
 
 Planning to study over Summer? Press **+ Add Summer** on any year. You can choose a new subject for that Summer or bring one forward from later in your plan. The 2027 guides only cover Autumn and Spring, so check in the Handbook that each Summer subject runs and where.

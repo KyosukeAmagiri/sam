@@ -886,6 +886,27 @@
     }
     return Object.keys(years).map(Number).sort(function (a, b) { return a - b; }).map(function (y) { return years[y]; });
   }
+  // Calendar dates assume a start in Autumn 2027, the intake these guides are for. Summer runs over
+  // the break after Spring, so it spans two calendar years.
+  const START_YEAR = 2027;
+  function calYear(y) { return START_YEAR + y - 1; }
+  function sessionLabel(y, sess) { return sess === 'Summer' ? 'Summer ' + calYear(y) + '/' + String(calYear(y) + 1).slice(2) : sess + ' ' + calYear(y); }
+  function sessionsInOrder(ctx) {
+    const out = [];
+    timeline(ctx, state.load).forEach(function (y) {
+      PLAN_SESSIONS.forEach(function (sess) { if (y[sess].length) out.push({ year: y.year, session: sess, slots: sortSlots(y[sess]) }); });
+    });
+    return out;
+  }
+  // the last session with anything in it; moving subjects into Summer can bring it forward
+  function finishOf(ctx) {
+    const all = sessionsInOrder(ctx);
+    return all.length ? all[all.length - 1] : null;
+  }
+  // the first session with a subject not yet ticked off
+  function nextSession(ctx) {
+    return sessionsInOrder(ctx).find(function (x) { return x.slots.some(function (s) { return !s.done; }); }) || null;
+  }
 
   // ======================================================================== render: pieces
   const ROMAN = [['M', 1000], ['CM', 900], ['D', 500], ['CD', 400], ['C', 100], ['XC', 90], ['L', 50], ['XL', 40], ['X', 10], ['IX', 9], ['V', 5], ['IV', 4], ['I', 1]];
@@ -1058,19 +1079,23 @@
   function renderFacts(ctx) {
     const d = ctx.deg;
     const item = function (label, value, cls) { return '<div><span class="rb-l">' + label + '</span><span class="rb-v' + (cls ? ' ' + cls : '') + '">' + value + '</span></div>'; };
+    // the finish replaces a plain duration: it moves with the load and with subjects taken over Summer
+    const end = finishOf(ctx);
+    const pt = state.load === 'PT';
+    const finish = item('Finish · starting ' + START_YEAR, end ? sessionLabel(end.year, end.session) + ' <small>· ' + fmt(pt ? d.ptYears : d.ftYears) + ' yrs ' + (pt ? 'part-time' : 'full-time') + '</small>' : '<small>No subjects yet</small>');
     if (ctx.custom) {
       const open = ctx.risks.pending.length;
       $('#facts').innerHTML =
         item('Credit points required', d.cp + ' CP', 'big') +
         item('Placed so far', ctx.placedCP + ' CP <small>· ' + plural(open, 'open slot') + '</small>') +
-        item('Duration', fmt(d.ftYears) + ' yrs full-time <small>· ' + fmt(d.ptYears) + ' part-time</small>') +
+        finish +
         item('Starting point', ctx.tdeg ? esc(ctx.tdeg.code) + ' <small>' + esc(selectionLabel({ deg: ctx.tdeg, opt: ctx.topt })) + '</small>' : 'Blank plan') +
         '<div><a class="tbtn tbtn-outline handbook" href="' + esc(d.handbook) + '" target="_blank" rel="noopener">' + (ctx.tdeg ? 'Official 2027 Handbook →' : 'WSU Student Handbook →') + '</a></div>';
       return;
     }
     $('#facts').innerHTML =
       item('Credit points', d.cp + ' CP', 'big') +
-      item('Duration', fmt(d.ftYears) + ' yrs full-time <small>· ' + fmt(d.ptYears) + ' part-time</small>') +
+      finish +
       item('Intake', esc(d.intake) + (d.intakeList.length === 1 ? ' <small>only</small>' : '')) +
       item('Campuses', esc(d.campuses)) +
       '<div><a class="tbtn tbtn-outline handbook" href="' + esc(d.handbook) + '" target="_blank" rel="noopener">Official 2027 Handbook →</a></div>';
@@ -1138,6 +1163,31 @@
     $('#advisory').innerHTML = '<details class="advisory ' + sev + '" id="advisory-box"' + (ui.advisoryOpen ? ' open' : '') + '>' +
       '<summary>' + ALERT_ICON + '<span class="adv-label">Pathway Advisory</span><span class="adv-counts">' + parts.join(' · ') + '</span><span class="adv-cta">View details</span></summary>' +
       '<div class="adv-body">' + secs.join('') + '</div></details>';
+  }
+
+  // The next session with subjects still to do, with its codes ready to copy for enrolment.
+  function renderNext(ctx) {
+    const next = nextSession(ctx);
+    const actions = function (codes) {
+      return '<div class="next-actions">' + (codes.length ? '<button type="button" class="tbtn tbtn-primary" data-action="copy-codes" data-codes="' + esc(codes.join(', ')) + '">Copy subject codes</button>' : '') +
+        '<button type="button" class="tbtn tbtn-outline" data-action="import-open" title="Paste your academic record or results to tick off the subjects you have passed">Tick off from my results</button></div>';
+    };
+    if (!next) {
+      $('#next').innerHTML = '<div class="next-card"><div class="next-main"><p class="kicker">Next to enrol</p><h3>' + (ctx.slots.length ? 'Every subject in your plan is ticked off' : 'Your plan has no subjects yet') + '</h3></div>' + actions([]) + '</div>';
+      return;
+    }
+    const todo = next.slots.filter(function (s) { return !s.done; });
+    const codes = todo.filter(function (s) { return !s.pending; }).map(function (s) { return s.code; });
+    const choices = todo.filter(function (s) { return s.pending; }).length;
+    const started = ctx.slots.some(function (s) { return s.done; });
+    $('#next').innerHTML = '<div class="next-card"><div class="next-main">' +
+      '<p class="kicker">' + (started ? 'Next to enrol' : 'Your first session') + '</p>' +
+      '<h3>' + sessionLabel(next.year, next.session) + ' <small>Year ' + next.year + (state.load === 'PT' ? ' · part-time' : '') + '</small></h3>' +
+      '<div class="chiplist">' + todo.map(function (s) {
+        return '<button type="button" class="chipbtn' + (s.pending ? ' is-open' : '') + '" data-action="jump" data-slot="' + s.id + '"><code>' + esc(s.pending ? 'Choose' : s.code) + '</code>' + esc(s.title) + ' <span>' + s.cp + ' CP</span></button>';
+      }).join('') + '</div>' +
+      (choices ? '<p class="next-note">' + plural(choices, 'choice') + ' to make before you enrol.</p>' : '') + '</div>' +
+      actions(codes) + '</div>';
   }
 
   function renderLegend(ctx) {
@@ -1242,7 +1292,7 @@
         : '';
       html += '<article class="year" id="year-' + y.year + '" aria-label="Year ' + y.year + '">' +
         '<header class="year-bar" data-roman="' + R + '"><span class="year-seal" aria-hidden="true">' + R + '</span>' +
-        '<h2>Year ' + y.year + (pt ? '<small>Part-time</small>' : '') + '</h2>' + addSummer +
+        '<h2>Year ' + y.year + '<small>' + calYear(y.year) + (pt ? ' · part-time' : '') + '</small></h2>' + addSummer +
         '<div class="year-cp"><b>' + sumCP(lists.Autumn) + ' CP</b> Autumn · <b>' + sumCP(lists.Spring) + ' CP</b> Spring' + (lists.Summer.length ? ' · <b>' + sumCP(lists.Summer) + ' CP</b> Summer' : '') + '<span class="done">' + sumCP(all, true) + ' / ' + sumCP(all) + ' CP completed</span></div></header>' +
         '<div class="sessions">';
       sessions.forEach(function (sess) {
@@ -1452,6 +1502,7 @@
     renderDock(ctx);
     renderFacts(ctx);
     renderAdvisory(ctx);
+    renderNext(ctx);
     renderSectionHead(ctx);
     renderLegend(ctx);
     renderGrid(ctx);
@@ -1509,6 +1560,7 @@
     ui.modal = null;
     ui.picker = null;
     ui.setupSummer = 0;
+    ui.importFound = null;
     $('#modal-root').innerHTML = '';
     document.body.style.overflow = '';
   }
@@ -1986,6 +2038,110 @@
     ta.select();
   }
 
+  function copyText(text, done) {
+    const fallback = function () {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+      toast(ok ? done : 'Copy these codes: ' + text);
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { toast(done); }, fallback);
+    else fallback();
+  }
+
+  // ======================================================================== tick off from results
+  // Every subject code in pasted text (an academic record, results or a plain list) is matched to the
+  // plan. A code followed on its line by a fail or withdrawal grade is left unticked for the student
+  // to check. Nothing pasted is stored or sent anywhere.
+  const FAIL_MARK = /(^|[^A-Za-z])(F|FF|AF|FAIL|FAILED|W|WD|WN|WITHDRAWN|INCOMPLETE|DNS)(?![A-Za-z])/i;
+  function parseResults(text, ctx) {
+    const found = [];
+    const seen = {};
+    String(text || '').split(/\r?\n/).forEach(function (line) {
+      const hits = [];
+      const re = /(^|[^A-Za-z0-9])([A-Za-z]{4})\s?(\d{4})(?![0-9])/g;
+      let m;
+      while ((m = re.exec(line))) hits.push({ code: m[2].toUpperCase() + ' ' + m[3], end: re.lastIndex, start: m.index });
+      hits.forEach(function (h, i) {
+        if (seen[h.code]) return;
+        seen[h.code] = 1;
+        // the grade belongs to the text between this code and the next one on the line
+        found.push({ code: h.code, failed: FAIL_MARK.test(line.slice(h.end, i + 1 < hits.length ? hits[i + 1].start : line.length)) });
+      });
+    });
+    const inPlan = {};
+    ctx.slots.forEach(function (s) { if (!s.pending && s.code) (inPlan[s.code] = inPlan[s.code] || []).push(s); });
+    // text such as "Year 2027" also looks like a code, so only real subjects (or ones in the plan) count
+    return found.map(function (f) {
+      const slots = inPlan[f.code] || [];
+      const known = GLOBAL_BY_CODE[f.code] || EXTRA_BY_CODE[f.code];
+      return { code: f.code, failed: f.failed, slots: slots, known: !!known, title: slots.length ? slots[0].title : known ? known.title : '', done: slots.length > 0 && slots.every(function (s) { return s.done; }) };
+    }).filter(function (f) { return f.slots.length || f.known; });
+  }
+  function openImport() {
+    ui.modal = 'import';
+    ui.importFound = [];
+    $('#modal-root').innerHTML = '<div class="modal-backdrop" data-action="backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="import-h">' +
+      '<div class="modal-head"><div><h2 id="import-h">Tick off from my results</h2><p>Paste your academic record, results or a list of subjects you have passed. Every subject code in the text is matched to your plan, and nothing you paste leaves this browser.</p></div><button type="button" class="modal-x" data-action="modal-close" aria-label="Close">×</button></div>' +
+      '<div class="modal-body import-body"><label class="field-label" for="import-text">Your results</label>' +
+      '<textarea class="input" id="import-text" rows="6" placeholder="For example:&#10;LAWS 1003  Fundamentals of Australian Law  HD&#10;LAWS1010  Legal Methods  D"></textarea>' +
+      '<div id="import-results"></div></div>' +
+      '<div class="modal-foot"><span class="small muted" id="import-summary">Subjects you pass later can be ticked here again.</span><div style="display:flex;gap:8px">' +
+      '<button type="button" class="btn btn-ghost" data-action="modal-close">Cancel</button><button type="button" class="btn btn-primary" data-action="import-apply" id="import-apply" disabled>Tick subjects</button></div></div></div></div>';
+    document.body.style.overflow = 'hidden';
+    const t = $('#import-text');
+    if (t && window.matchMedia('(pointer:fine)').matches) t.focus();
+  }
+  function renderImportResults() {
+    const found = parseResults($('#import-text').value, lastCtx);
+    ui.importFound = found;
+    const plan = found.filter(function (f) { return f.slots.length; });
+    const other = found.filter(function (f) { return !f.slots.length; });
+    let html = '';
+    if (plan.length) {
+      html += '<div class="pick-section"><h4><span>In your plan</span><span>' + plan.length + '</span></h4><div class="import-list">' + plan.map(function (f) {
+        const note = f.done ? '<span class="status status-major">Already ticked</span>' : f.failed ? '<span class="status status-non">Looks like a fail or withdrawal</span>' : '';
+        return '<label class="import-row"><input type="checkbox" name="import-pick" value="' + esc(f.code) + '"' + (f.done ? ' checked disabled' : f.failed ? '' : ' checked') + '>' +
+          '<code>' + esc(f.code) + '</code><span class="import-title">' + esc(f.title) + ' <small>' + f.slots.map(where).join(', ') + '</small></span>' + note + '</label>';
+      }).join('') + '</div></div>';
+    }
+    if (other.length) {
+      html += '<div class="pick-section"><h4><span>Not in your plan</span><span>' + other.length + '</span></h4><p class="pick-hint">If these count towards your degree, add them as a choice or elective first, then tick them here or on the plan.</p><div class="chiplist import-other">' +
+        other.map(function (f) { return '<span class="chipbtn"><code>' + esc(f.code) + '</code>' + esc(f.title) + '</span>'; }).join('') + '</div></div>';
+    }
+    if (!found.length && $('#import-text').value.trim()) html = '<p class="pick-hint">No subject codes found. Codes look like LAWS 1003 or LAWS1003.</p>';
+    $('#import-results').innerHTML = html;
+    updateImportCount();
+  }
+  function updateImportCount() {
+    const n = document.querySelectorAll('input[name="import-pick"]:checked:not(:disabled)').length;
+    const btn = $('#import-apply');
+    btn.disabled = !n;
+    btn.textContent = n ? 'Tick ' + plural(n, 'subject') : 'Tick subjects';
+  }
+  function applyImport() {
+    const codes = Array.from(document.querySelectorAll('input[name="import-pick"]:checked:not(:disabled)')).map(function (i) { return i.value; });
+    const key = currentKey();
+    let n = 0;
+    (ui.importFound || []).forEach(function (f) {
+      if (codes.indexOf(f.code) < 0) return;
+      n++;
+      f.slots.forEach(function (s) {
+        if (isCustom()) state.custom.slots[s.idx].done = true;
+        else { state.done[key] = state.done[key] || {}; state.done[key][s.id] = 1; }
+      });
+    });
+    closeModal();
+    render();
+    toast('Ticked off ' + plural(n, 'subject') + ' from your results.');
+  }
+
   // ======================================================================== PDF / print engine
   function pdPill(c, hl) { return '<span class="pp pp-' + c + (hl ? ' pp-hl' : '') + '">' + c + '</span>'; }
   function pdOffer(offer) {
@@ -2375,6 +2531,9 @@
         flashSlot(id);
         break;
       }
+      case 'copy-codes': copyText(el.dataset.codes, 'Copied ' + el.dataset.codes + ' for enrolment.'); break;
+      case 'import-open': openImport(); break;
+      case 'import-apply': applyImport(); break;
       case 'summer-add': {
         const y = +el.dataset.y;
         if (!ctx.custom) { openSetup({ start: 'template', tpl: currentKey(), summerYear: y }); break; }
@@ -2484,7 +2643,8 @@
       render();
       toast((s.pending ? 'Open slot' : s.code) + ' moved to Year ' + v[0] + ' ' + v[1] + '.');
       flashSlot(id);
-    } else if (t.name === 'cs-start') { setupSync('start'); }
+    } else if (t.name === 'import-pick') { updateImportCount(); }
+    else if (t.name === 'cs-start') { setupSync('start'); }
     else if (t.id === 'cs-tpl-deg') { $('#cs-tpl-major').innerHTML = tplMajorOptions(t.value, DEG[t.value].options[0]); setupSync('tpl'); }
     else if (t.id === 'sel-major') { setMajor(t.value); render(); }
     else if (t.id === 'sel-campus') { state.campus = t.value; render(); }
@@ -2510,6 +2670,7 @@
   document.addEventListener('input', function (ev) {
     const t = ev.target;
     if (t.id === 'pick-q') { ui.picker.q = t.value; renderPickerResults(); }
+    else if (t.id === 'import-text') { renderImportResults(); }
     else if (t.id === 'cat-q') { ui.cat.q = t.value; renderCatalogueRows(lastCtx); }
     else if (t.id === 'custom-name' && isCustom()) {
       state.custom.name = t.value.slice(0, 120);

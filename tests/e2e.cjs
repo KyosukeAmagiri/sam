@@ -407,6 +407,47 @@ async function renderPdf(page, key, mode, orient, file) {
   await sp.close();
   await sp2.close();
 
+  // ---------------------------------------------------------------- progress tools: finish date, next to enrol, tick off from results
+  const pp = await newPage(browser);
+  await pp.goto(APP);
+  await pp.evaluate(() => { localStorage.clear(); WSLSA.select('2848|BASE'); });
+  check(/Spring 2030/.test(await pp.textContent('#facts')), '2848 full-time should finish in Spring 2030');
+  check(JSON.stringify(await pp.$$eval('.year-bar h2 small', s => s.map(x => x.textContent))) === JSON.stringify(['2027', '2028', '2029', '2030']), 'year bars should show calendar years from 2027');
+  await pp.click('[data-action="load"][data-load="PT"]');
+  check(/Spring 2034/.test(await pp.textContent('#facts')), '2848 part-time should finish in Spring 2034');
+  await pp.click('[data-action="load"][data-load="FT"]');
+  // next to enrol: the first session with anything left, codes ready to copy
+  const y1a = await pp.evaluate(() => WSLSA.context().slots.filter(s => s.year === 1 && s.session === 'Autumn' && !s.pending).map(s => s.code).join(', '));
+  check(/Your first session/.test(await pp.textContent('#next')) && /Autumn 2027/.test(await pp.textContent('#next')), 'a fresh plan should point to Autumn 2027 first');
+  check(await pp.$eval('[data-action="copy-codes"]', b => b.dataset.codes) === y1a, `Copy subject codes should hold the Year 1 Autumn codes, got ${await pp.$eval('[data-action="copy-codes"]', b => b.dataset.codes)}`);
+  await pp.click('[data-action="copy-codes"]');
+  await pp.waitForTimeout(100);
+  check(/Copied LAWS 1003/.test(await pp.textContent('#toast')), 'copying codes should confirm what was copied');
+  await pp.click('#year-1 section[aria-label="Autumn session"] [data-action="session-done"]');
+  check(/Next to enrol/.test(await pp.textContent('#next')) && /Spring 2027/.test(await pp.textContent('#next')), 'ticking Year 1 Autumn should move Next to enrol to Spring 2027');
+  // tick off from results: codes in any format, fails left unticked, other text ignored
+  await pp.click('[data-action="import-open"]');
+  await pp.fill('#import-text', 'Academic record\nYear 2027 Autumn\nlaws2018 Criminal Law and Procedure  D 74\nLAWS 2013 Torts Law  F 41\nACCT 1007 Financial Accounting Applications C');
+  await pp.waitForTimeout(100);
+  const rows = await pp.$$eval('.import-row', rs => rs.map(r => [r.querySelector('code').textContent, r.querySelector('input').checked]));
+  check(JSON.stringify(rows) === JSON.stringify([['LAWS 2018', true], ['LAWS 2013', false]]), `results should match plan subjects and leave fails unticked, got ${JSON.stringify(rows)}`);
+  check(/ACCT 1007/.test(await pp.textContent('#import-results')) && !/YEAR 2027/.test(await pp.textContent('#import-results')), 'subjects outside the plan should be listed and plain text like "Year 2027" ignored');
+  await pp.click('#import-apply');
+  const ticked = await pp.evaluate(() => { const c = WSLSA.context(); return [c.slots.find(s => s.code === 'LAWS 2018').done, c.slots.find(s => s.code === 'LAWS 2013').done]; });
+  check(ticked[0] && !ticked[1], 'applying results should tick LAWS 2018 but not the failed LAWS 2013');
+  // emptying the last session in a custom plan brings the finish forward
+  await pp.click('[data-action="custom-from-current"]');
+  await pp.click('button[type=submit][form=setup-form]');
+  for (let guard = 0; guard < 8; guard++) {
+    const id = await pp.evaluate(() => { const s = WSLSA.context().slots.find(x => x.year === 4 && x.session === 'Spring'); return s ? s.id : null; });
+    if (!id) break;
+    await pp.click(`#slot-${id} [data-action="picker-open"]`);
+    await pp.click('.modal [data-action="cremove"]');
+  }
+  check(/Autumn 2030/.test(await pp.textContent('#facts')), 'removing Year 4 Spring should bring the finish forward to Autumn 2030');
+  check(pp.errors.length === 0, 'progress tools console errors: ' + pp.errors.join('; '));
+  await pp.close();
+
   // ---------------------------------------------------------------- mobile layout
   const m = await newPage(browser, { viewport: { width: 390, height: 844 } });
   await m.goto(APP);

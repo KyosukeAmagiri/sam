@@ -2,7 +2,9 @@
 
 An interactive degree pathway explorer and PDF guide generator for Western Sydney University law students, built entirely from the Western Sydney Law Students' Association **WSLSA Degree Guides 2027** workbook (2027 Student Handbook data).
 
-**Live site: https://kyosukeamagiri.github.io/sam/** (works on phones, tablets and computers). Sample PDF exports are at https://kyosukeamagiri.github.io/sam/samples/.
+**Live site: https://kyosukeamagiri.github.io/wslsa/** (works on phones, tablets and computers).
+
+Sample PDF exports: [2788 Accounting, custom pathway (Mode A)](https://kyosukeamagiri.github.io/wslsa/samples/2788-T046-accounting-custom-pathway-A4-portrait.pdf) · [2788 Accounting, complete handbook sheet (Mode B)](https://kyosukeamagiri.github.io/wslsa/samples/2788-T046-accounting-handbook-sheet-A4-portrait.pdf) · [2848 Laws, custom pathway, landscape (Mode A)](https://kyosukeamagiri.github.io/wslsa/samples/2848-laws-custom-pathway-A4-landscape.pdf)
 
 The same app is a single self-contained file, `dist/wslsa-pathway-explorer.html` (about 590 KB), with every degree, pathway and subject embedded, so it also works offline, can be emailed, or can be hosted anywhere static (SharePoint, a WSLSA website). Nothing is sent anywhere: a student's choices are saved in their own browser, and the Copy plan link button carries a plan to another device.
 
@@ -57,7 +59,7 @@ To test, install Playwright with Chromium (`npm install` then `npx playwright in
 
 `.github/workflows/pages.yml` runs on every push. It validates the data, confirms the committed `dist/` build matches the source, and runs the end-to-end checks in Chromium. When those pass on the default branch, it publishes the app to GitHub Pages as `index.html`, together with the sample PDFs. The one-time setup is **Settings > Pages > Build and deployment > Source: GitHub Actions**; until then the workflow still tests every push and leaves a notice instead of publishing.
 
-To update the live site after the workbook changes, replace the file in `data/source/`, run the three rebuild commands above, and push. Renaming the repository (for example to `wslsa-pathway-explorer`) changes the address to `https://kyosukeamagiri.github.io/<new-name>/`.
+To update the live site after the workbook changes, replace the file in `data/source/`, run the three rebuild commands above, and push. The site's address follows the repository name (`wslsa`), so renaming the repository again moves the site to `https://kyosukeamagiri.github.io/<new-name>/`; GitHub does not redirect the old address. A custom domain (Settings > Pages > Custom domain) keeps one stable address regardless of the repository name.
 
 ## Repository layout
 

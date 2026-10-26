@@ -97,10 +97,15 @@ a { color: var(--crimson); text-underline-offset: 3px; }
   display: flex; align-items: center; justify-content: space-between; gap: 18px;
 }
 .crest { display: flex; align-items: center; gap: 12px; color: var(--ink); text-decoration: none; min-width: 0; }
-.crest-mark { flex: none; width: 40px; height: 40px; }
-.crest-mark svg { width: 100%; height: 100%; display: block; }
-.crest-text { display: grid; min-width: 0; font: 600 15px/1.2 var(--sans); color: var(--ink); }
-.crest-text small { font: 700 9.5px/1.5 var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--crimson); margin-top: 2px; }
+.crest { gap: 14px; }
+/* the official WSLSA crest: in colour on light backgrounds, reversed (used as a mask) on dark ones */
+.crest-img { display: block; flex: none; background: var(--crest-img) center / contain no-repeat; }
+.crest-rev { display: block; flex: none; background-color: var(--gold-soft); -webkit-mask: var(--crest-img) center / contain no-repeat; mask: var(--crest-img) center / contain no-repeat; }
+.brand-crest { width: 108px; height: 56px; }
+.crest-text { display: grid; min-width: 0; padding-left: 14px; border-left: 1px solid var(--hairline); color: var(--ink); }
+.ct-ws { font: 500 17px/1.05 var(--serif); color: #4a4a4f; }
+.ct-lsa { font: 800 14.5px/1.2 var(--sans); letter-spacing: .03em; text-transform: uppercase; color: var(--crimson); }
+.crest-text small { font: 700 9px/1.5 var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--bronze); margin-top: 3px; }
 .top-actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; justify-content: flex-end; }
 .top-link { color: var(--muted); }
 
@@ -120,9 +125,10 @@ a { color: var(--crimson); text-underline-offset: 3px; }
 .why-btn { background: none; border: 0; padding: 0; color: #fff; font: 700 11px var(--sans); letter-spacing: .16em; text-transform: uppercase; cursor: pointer; border-bottom: 1px solid var(--gold); padding-bottom: 2px; }
 .why-text { flex-basis: 100%; margin: 4px 0 0; max-width: 92ch; color: #f6dfe5; font-size: 14px; line-height: 1.6; }
 .why-text b { color: #fff; }
-.hero-seal { width: 190px; height: 190px; flex: none; }
-.hero-seal svg { width: 100%; height: 100%; display: block; }
-.hero-watermark { position: absolute; right: -60px; top: -40px; width: 420px; height: auto; z-index: 0; pointer-events: none; opacity: .9; }
+.hero-seal { display: grid; justify-items: center; gap: 12px; flex: none; }
+.hero-crest { width: 270px; height: 140px; }
+.hero-est { font: 700 9.5px/1.4 var(--sans); letter-spacing: .24em; text-transform: uppercase; color: var(--gold-soft); padding-top: 10px; border-top: 1px solid rgba(227, 199, 116, .45); }
+.hero-watermark { position: absolute; right: -120px; top: -30px; width: 720px; height: 372px; z-index: 0; pointer-events: none; background-color: rgba(255, 255, 255, .045); }
 
 /* ---------- sticky command dock */
 .dock {
@@ -404,13 +410,13 @@ table.cat td.c-comp { color: var(--muted); font-size: 12.5px; max-width: 260px; 
 
 /* ---------- footer (charcoal, as the "A year at WSLSA" band) */
 .site-footer { position: relative; overflow: hidden; background-color: var(--ink); background-image: var(--texture); color: #cbc5bc; }
-.foot-watermark { position: absolute; left: -70px; bottom: -90px; width: 360px; height: auto; pointer-events: none; }
+.foot-watermark { position: absolute; left: -90px; bottom: -70px; width: 520px; height: 269px; pointer-events: none; background-color: rgba(255, 255, 255, .04); }
 .foot-inner {
   position: relative; max-width: 1280px; margin: 0 auto; padding-block: 48px 30px; padding-left: var(--gutter); padding-right: var(--gutter-r);
   display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.4fr); gap: 36px;
 }
-.foot-brand { display: flex; gap: 16px; align-items: flex-start; }
-.foot-brand .crest-mark { width: 58px; height: 58px; }
+.foot-brand { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+.foot-crest { width: 112px; height: 58px; }
 .foot-sub { margin: 0; font: italic 500 17px var(--serif); color: var(--gold-soft); }
 .foot-name { margin: 0; font: 700 15px/1.25 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: #fff; }
 .foot-tag { margin: 8px 0 0; font: 700 10px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--gold); }
@@ -488,7 +494,7 @@ table.cat tr.extra td.c-code { color: var(--slate); }
 @media (max-width: 1180px) {
   .dock-card { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); }
   .dock-card .progress { grid-column: span 2; }
-  .hero-seal { width: 150px; height: 150px; }
+  .hero-crest { width: 210px; height: 109px; }
 }
 @media (max-width: 980px) {
   .top-link { display: none; }
@@ -513,7 +519,11 @@ table.cat tr.extra td.c-code { color: var(--slate); }
   .tbtn { padding: 8px 10px; letter-spacing: .12em; min-height: 36px; }
   .hero-grid { padding-block: 26px 24px; }
   .hero-band .kicker::before { width: 20px; }
-  .crest-text { font-size: 13.5px; }
+  .brand-crest { width: 84px; height: 44px; }
+  .crest { gap: 10px; }
+  .crest-text { padding-left: 10px; }
+  .ct-ws { font-size: 15px; }
+  .ct-lsa { font-size: 12.5px; }
   .dock-card { grid-template-columns: 1fr; }
   .dock-card .progress { grid-column: auto; }
   .ribbon { display: grid; grid-template-columns: 1fr 1fr; }
@@ -539,4 +549,42 @@ table.cat tr.extra td.c-code { color: var(--slate); }
   .pick .p-meta { grid-column: 1 / -1; }
   .modal-backdrop { padding: 0; align-items: stretch; }
   .modal, .modal-wide { width: 100%; max-height: 100vh; height: 100vh; border-radius: 0; }
+}
+
+/* ---------- custom degree plans */
+.section-head { align-items: flex-end; flex-wrap: wrap; }
+.section-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.add-slot { color: var(--amber-ink); border-color: var(--gold); }
+.session-cp.over { color: var(--crimson); }
+.session-cp.over::after { content: " · over load"; font: 700 9.5px var(--sans); letter-spacing: .14em; text-transform: uppercase; }
+.grid-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.plan-empty { padding: 22px; border: 1.5px dashed var(--amber); background: var(--amber-tint); color: var(--amber-ink); font-size: 14px; }
+.structure-row.row-open .sbar span { background: repeating-linear-gradient(90deg, var(--amber) 0 6px, transparent 6px 10px); }
+.custom-form.cf-cp { grid-template-columns: 140px minmax(0, 1fr) 104px auto; }
+.move-row { display: flex; align-items: center; gap: 10px; }
+.move-row label { font: 700 10px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.move-row .select-wrap select { min-height: 38px; font-size: 13.5px; }
+.modal-setup { width: min(760px, 100%); }
+.setup-body { overflow-y: auto; padding: 18px 20px 20px; display: grid; gap: 22px; flex: 1; min-height: 0; }
+.setup-body fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 10px; min-width: 0; }
+.setup-body legend { display: flex; align-items: baseline; gap: 8px; padding: 0; margin-bottom: 10px; font: 600 22px/1.15 var(--serif); color: var(--ink); }
+.setup-body legend .idx { font: 700 11px var(--mono); color: var(--crimson); }
+.setup-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; }
+.cp-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; }
+.cp-presets { flex-wrap: wrap; }
+.cp-presets button { font-family: var(--mono); letter-spacing: .04em; font-size: 12px; padding: 0 14px; }
+.cp-field { width: 150px; }
+.cs-derived { margin: 0; font-size: 13px; color: var(--muted); }
+.cs-derived b { color: var(--crimson); font-family: var(--mono); }
+.start-opts { display: grid; gap: 8px; }
+.tpl-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 12px; padding: 12px; background: var(--canvas); border: 1px solid var(--hairline); }
+.tpl-fields .check-row { grid-column: 1 / -1; }
+.tpl-fields[hidden], .cs-warn[hidden] { display: none; }
+.cs-warn { margin: 0; padding: 9px 12px; background: var(--amber-tint); border-left: 3px solid var(--amber); color: var(--amber-ink); font-size: 13px; }
+.opt-card.is-off { cursor: not-allowed; opacity: .6; }
+@media (max-width: 760px) {
+  .setup-row, .tpl-fields { grid-template-columns: 1fr; }
+  .custom-form.cf-cp { grid-template-columns: 1fr; }
+  .move-row { width: 100%; }
+  .move-row .select-wrap { flex: 1; }
 }

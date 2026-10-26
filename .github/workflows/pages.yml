@@ -81,6 +81,7 @@ jobs:
           mkdir -p _site/samples
           cp dist/wslsa-pathway-explorer.html _site/index.html
           cp samples/*.pdf _site/samples/
+          cp src/assets/og-image.png src/assets/apple-touch-icon.png src/assets/favicon.png _site/
           touch _site/.nojekyll
 
       - uses: actions/configure-pages@v5

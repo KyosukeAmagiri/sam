@@ -9,8 +9,11 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="WSLSA 2027 Pathway Explorer">
 <meta property="og:description" content="Plan your WSU law degree session by session: pick majors and LLB Alternates, check campus and prerequisite warnings, and export a PDF degree guide.">
-<meta name="twitter:card" content="summary">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='49' fill='%238B0029'/%3E%3Ccircle cx='50' cy='50' r='43.5' fill='none' stroke='%23C59B27' stroke-width='3'/%3E%3Cg fill='none' stroke='%23E3C774' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M50 27V73M38 76H62M28 35H72M28 35L21 53M28 35L35 53M72 35L65 53M72 35L79 53M19 53Q28 61 37 53ZM63 53Q72 61 81 53Z'/%3E%3C/g%3E%3C/svg%3E">
+<meta property="og:image" content="https://kyosukeamagiri.github.io/wslsa/og-image.png">
+<meta property="og:image:alt" content="Western Sydney Law Students' Association logo">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" sizes="64x64" href="@@FAVICON@@">
+<link rel="apple-touch-icon" href="@@TOUCH_ICON@@">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap">
@@ -20,15 +23,16 @@
 <style>
 /*@@PRINT_STYLES@@*/
 </style>
+<style>:root { --crest-img: url("@@CREST@@"); }</style>
 <style id="page-size">@page { size: A4 portrait; margin: 10mm; }</style>
 </head>
 <body>
 <div class="app" id="app">
   <header class="topbar">
     <div class="topbar-inner">
-      <a class="crest" href="#" data-action="top" aria-label="WSLSA 2027 Degree Pathway Explorer, back to top">
-        <span class="crest-mark" data-crest></span>
-        <span class="crest-text">Western Sydney Law Students' Association<small>Est. 1996 · Degree Pathway Explorer</small></span>
+      <a class="crest" href="#" data-action="top" aria-label="Western Sydney Law Students' Association, 2027 Degree Pathway Explorer, back to top">
+        <span class="crest-img brand-crest" role="img" aria-label="WSLSA crest"></span>
+        <span class="crest-text"><span class="ct-ws">Western Sydney</span><span class="ct-lsa">Law Students' Association</span><small>Est. 1996 · Degree Pathway Explorer</small></span>
       </a>
       <nav class="top-actions" aria-label="Plan actions">
         <a class="tbtn top-link" href="https://wslsa.com.au/" target="_blank" rel="noopener">wslsa.com.au ↗</a>
@@ -42,7 +46,7 @@
 
   <main id="main">
     <section class="hero-band" aria-labelledby="hero-title">
-      <svg class="hero-watermark" viewBox="0 0 240 280" aria-hidden="true"><path d="M120 10 226 40v88c0 68-46 116-106 142C60 244 14 196 14 128V40Z" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.07)" stroke-width="4"/><g fill="none" stroke="rgba(255,255,255,.08)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" transform="translate(52 62) scale(1.36)"><path d="M50 22V74M38 78H62M26 32H74M26 32 18 52M26 32 34 52M74 32 66 52M74 32 82 52M15 52Q26 62 37 52ZM63 52Q74 62 85 52Z"/><circle cx="50" cy="19" r="3.2"/></g></svg>
+      <span class="hero-watermark crest-rev" aria-hidden="true"></span>
       <div class="wrap hero-grid">
         <div class="hero-copy">
           <p class="kicker">Western Sydney Law Students' Association <i>·</i> Est. 1996 <i>·</i> By students, for students</p>
@@ -51,14 +55,8 @@
           <div class="hero-meta" id="hero-meta"></div>
         </div>
         <div class="hero-seal" aria-hidden="true">
-          <svg viewBox="0 0 220 220">
-            <defs><path id="seal-ring" d="M110 110m-84 0a84 84 0 1 1 168 0a84 84 0 1 1-168 0"/></defs>
-            <circle cx="110" cy="110" r="106" fill="none" stroke="rgba(255,255,255,.25)" stroke-dasharray="1.5 5"/>
-            <text fill="#F6E3E8" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="700" letter-spacing="3"><textPath href="#seal-ring" textLength="520" lengthAdjust="spacing">EST. 1996 • BY STUDENTS, FOR STUDENTS • 2027 DEGREE GUIDE •</textPath></text>
-            <circle cx="110" cy="110" r="64" fill="rgba(255,255,255,.07)" stroke="rgba(227,199,116,.6)" stroke-width="1.2"/>
-            <g fill="none" stroke="#F3E3C0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" transform="translate(65 58) scale(.9)"><path d="M50 22V74M38 78H62M26 32H74M26 32 18 52M26 32 34 52M74 32 66 52M74 32 82 52M15 52Q26 62 37 52ZM63 52Q74 62 85 52Z"/><circle cx="50" cy="19" r="3.2"/></g>
-            <text x="110" y="153" text-anchor="middle" font-family="Cormorant Garamond, Georgia, serif" font-size="16" font-weight="600" letter-spacing="4" fill="#E3C774">WSLSA</text>
-          </svg>
+          <span class="crest-rev hero-crest"></span>
+          <span class="hero-est">Est. 1996 · By students, for students</span>
         </div>
       </div>
     </section>
@@ -72,9 +70,10 @@
       <section id="advisory" aria-label="Pathway advisory"></section>
       <div class="section-head">
         <div>
-          <p class="kicker">Recommended pathway <i>·</i> 2027</p>
+          <p class="kicker" id="section-kicker">Recommended pathway <i>·</i> 2027</p>
           <h2>Your degree, session by session</h2>
         </div>
+        <div class="section-tools" id="section-tools"></div>
       </div>
       <section class="micro-legend" id="legend" aria-label="Legend"></section>
       <section class="grid" id="grid" aria-label="Recommended pathway"></section>

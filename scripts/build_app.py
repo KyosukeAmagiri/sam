@@ -9,6 +9,7 @@ duplicated elsewhere in the store (degree-sheet copies of Pathway Data, key fact
 Overview, per-row degree/major keys) and packs pathway and catalogue rows as arrays to keep the
 single file small enough to email or host anywhere.
 """
+import base64
 import json
 import sys
 from pathlib import Path
@@ -55,6 +56,11 @@ def payload(d):
     }
 
 
+def data_uri(name):
+    """Logo assets (made by make_logo_assets.py) are inlined so the page stays one self-contained file."""
+    return "data:image/png;base64," + base64.b64encode((SRC / "assets" / name).read_bytes()).decode("ascii")
+
+
 def main():
     d = json.loads(DATA.read_text(encoding="utf-8"))
     data_js = json.dumps(payload(d), ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
@@ -64,6 +70,9 @@ def main():
         "/*@@PRINT_STYLES@@*/": (SRC / "print.css").read_text(encoding="utf-8"),
         "/*@@APP@@*/": (SRC / "app.js").read_text(encoding="utf-8"),
         "@@DATA@@": data_js,
+        "@@CREST@@": data_uri("wslsa-crest.png"),
+        "@@FAVICON@@": data_uri("favicon.png"),
+        "@@TOUCH_ICON@@": data_uri("apple-touch-icon.png"),
     }
     for marker, content in parts.items():
         if html.count(marker) != 1:

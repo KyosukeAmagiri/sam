@@ -191,17 +191,25 @@ async function renderPdf(page, key, mode, orient, file) {
   check(await p2.evaluate(() => !!WSLSA.context().key), 'a malformed plan link should fall back gracefully');
   await fresh.close();
 
-  // ---------------------------------------------------------------- short share links
+  // ---------------------------------------------------------------- share codes
   // the address bar stays clean while planning, and links carry only what differs from the pathway
   check(await page.evaluate(() => location.hash) === '', 'the address bar should not carry the plan while planning');
-  check(/^#2848\/p=1A4:HUMN1052,2S2:LAWS3067,3A2:LAWS4008(\/|$)/.test(new URL(url).hash) && new URL(url).hash.length < 80, `2848 choices should make a short link, got ${new URL(url).hash}`);
+  // a shared link is a scrambled code holding only what differs from the pathway
+  const code = new URL(url).hash.slice(1);
+  check(/^[A-Za-z0-9_-]{14,}$/.test(code) && !/LAWS|2848/.test(code), `a shared link should be an opaque code, got ${code}`);
+  check(/^2848\/p=1A4:HUMN1052,2S2:LAWS3067,3A2:LAWS4008(\/|$)/.test(await page.evaluate(c => WSLSA.unscramble(c), code)), 'the code should hold only the 2848 choices');
+  // a fresh code on every share, never repeated, even for the same plan
+  const codes = await page.evaluate(() => Array.from({ length: 2000 }, () => WSLSA.planUrl().split('#')[1]));
+  check(new Set(codes).size === codes.length, 'every share should produce a different code');
+  check((await page.evaluate(cs => new Set(cs.map(c => WSLSA.unscramble(c))).size, codes)) === 1, 'every code for the same plan should open that plan');
   const links = await browser.newContext();
   const lp = await links.newPage();
   lp.errors = [];
   lp.on('pageerror', e => lp.errors.push(e.message));
   await lp.goto(APP);
   await lp.evaluate(() => { localStorage.clear(); WSLSA.select('2848|BASE'); });
-  check(new URL(await lp.evaluate(() => WSLSA.planUrl())).hash === '#2848', 'an untouched pathway should link as #2848');
+  check(await lp.evaluate(() => WSLSA.linkText()) === '2848', 'an untouched pathway should carry only its key');
+  check((await lp.evaluate(() => WSLSA.planUrl())).split('#')[1].length <= 20, 'an untouched pathway should share as a short code');
   // a typed elective keeps its title; ticks, campus and part-time survive a round trip
   await lp.click('#slot-1A4 [data-action="picker-open"]');
   await lp.fill('#cu-code', 'TEST 1001');
@@ -225,7 +233,8 @@ async function renderPdf(page, key, mode, orient, file) {
   await lp.click(`#slot-${await lp.evaluate(() => WSLSA.context().slots.find(s => s.session === 'Summer').id)} [data-action="picker-open"]`);
   await lp.click('[data-action="cbring"]');
   const customLinkUrl = await lp.evaluate(() => WSLSA.planUrl());
-  check(/^#my\/tp=2788-T046\/s=[\d,:\-AUS]+/.test(new URL(customLinkUrl).hash) && new URL(customLinkUrl).hash.length < 80, `a custom copy should link by template ranges, got ${new URL(customLinkUrl).hash}`);
+  const customText = await lp.evaluate(() => WSLSA.linkText());
+  check(/^my\/tp=2788-T046\/s=[\d,:\-AUS]+/.test(customText) && customText.length < 80, `a custom copy should link by template ranges, got ${customText}`);
   const customBefore = await lp.evaluate(() => JSON.stringify(WSLSA.custom()));
   const lp3 = await links.newPage();
   await lp3.goto(customLinkUrl);
@@ -249,6 +258,14 @@ async function renderPdf(page, key, mode, orient, file) {
     check(await lp5.evaluate(() => !!WSLSA.context().key) && lp5.errors.length === 0, `a damaged link (${bad}) should fall back gracefully: ${lp5.errors.join('; ')}`);
     await lp4.goto(APP + bad);
   }
+  // a code cut short by a messaging app is caught by its check byte, and readable links from before codes still open
+  const lp6 = await links.newPage();
+  await lp6.goto(customLinkUrl.slice(0, -3));
+  await lp6.waitForTimeout(100);
+  check(/incomplete or damaged/.test(await lp6.textContent('#toast')), 'a code cut short should say the link is damaged');
+  await lp6.goto(APP + '#2848/p=1A4:HUMN1052,2S2:LAWS3067/c=CA');
+  await lp6.waitForTimeout(100);
+  check(await lp6.evaluate(() => { const c = WSLSA.context(); return c.key === '2848|BASE' && c.byId['1A4'].code === 'HUMN 1052' && WSLSA.state().campus === 'CA'; }), 'a readable link from before codes should still open');
   check(lp.errors.length === 0 && lp4.errors.length === 0, 'share link console errors: ' + lp.errors.concat(lp4.errors).join('; '));
   await links.close();
 
@@ -325,7 +342,7 @@ async function renderPdf(page, key, mode, orient, file) {
   await page.click('#slot-3S1 .tick');
   check(await page.evaluate(() => WSLSA.context().doneCP) === before, 'unticking should remove the CP again');
   const planDoc = await page.evaluate(() => WSLSA.buildPrintDoc({ mode: 'A', orient: 'portrait' }));
-  check(/pd-plan">[^<]*#\d{4}/.test(planDoc) && /Est\. 1996/.test(planDoc), 'PDF masthead should carry the plan link and Est. 1996 line');
+  check(/pd-plan">[^<]*#[A-Za-z0-9_-]{14,}</.test(planDoc) && /Est\. 1996/.test(planDoc), 'PDF masthead should carry the plan link and Est. 1996 line');
 
   // ---------------------------------------------------------------- export modal and print document
   await page.click('[data-action="export-open"]');

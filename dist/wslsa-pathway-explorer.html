@@ -1244,11 +1244,12 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
   }
 
   // ---- share links. The address bar stays clean while a student plans; a link is built only when
-  // they copy it or print. A link names the pathway and carries only what differs from it:
-  //   #2788-T046/p=2A3:LAWS3067/d=Pw/c=PC      a WSLSA pathway with a choice, ticks and a campus
-  //   #my/tp=2788-T046/s=0-12,1U:LAWS2003::13,14-39   a custom copy of that pathway: runs of untouched
-  //                                                    template slots as index ranges, changed slots in full
+  // they copy it or print. The plan text names the pathway and carries only what differs from it:
+  //   2788-T046/p=2A3:LAWS3067/d=Pw/c=PC      a WSLSA pathway with a choice, ticks and a campus
+  //   my/tp=2788-T046/s=0-12,1U:LAWS2003::13,14-39   a custom copy of that pathway: runs of untouched
+  //                                                   template slots as index ranges, changed slots in full
   // Subject titles are looked up from the code, so only titles typed in by hand travel in the link.
+  // The text is then scrambled into a code that differs on every share (scrambleLink below).
   const SESS_LETTER = { Autumn: 'A', Spring: 'S', Summer: 'U' };
   const LETTER_SESS = { A: 'Autumn', S: 'Spring', U: 'Summer' };
   // free text is percent-encoded, including the characters links use as separators
@@ -1328,6 +1329,45 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
     if (state.campus) parts.push('c=' + state.campus);
     if (state.load === 'PT') parts.push('pt');
     return parts.join('/');
+  }
+  // Shared links carry the plan as a scrambled code that is different every time, even for the same
+  // plan: 4 random bytes, then the time shared (seconds since 2026), a check byte and the plan text,
+  // all mixed with a keystream seeded from the random bytes. Two codes match only if two shares land
+  // in the same second with the same random bytes (1 in 4.3 billion). The code is scrambled, not
+  // encrypted: it hides the plan from a casual glance, and the check byte catches a link cut short.
+  const CODE_EPOCH = Date.UTC(2026, 0, 1);
+  function fnv(bytes) {
+    let h = 0x811c9dc5;
+    bytes.forEach(function (b) { h = Math.imul(h ^ b, 0x01000193) >>> 0; });
+    return h;
+  }
+  function keystream(seed) {
+    let s = fnv(seed) || 0x9e3779b9;
+    return function () { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s >>> 24; };
+  }
+  function scrambleLink(text) {
+    const r = new Uint8Array(4);
+    try { crypto.getRandomValues(r); } catch (e) { for (let i = 0; i < 4; i++) r[i] = Math.floor(Math.random() * 256); }
+    const t = Math.max(0, Math.floor((Date.now() - CODE_EPOCH) / 1000)) >>> 0;
+    const time = [t >>> 24, (t >>> 16) & 255, (t >>> 8) & 255, t & 255];
+    const body = Array.from(text, function (c) { return c.charCodeAt(0) & 255; });
+    const seed = Array.from(r);
+    const ks = keystream(seed);
+    const bytes = seed.concat(time.concat([fnv(time.concat(body)) & 255], body).map(function (b) { return b ^ ks(); }));
+    return btoa(String.fromCharCode.apply(null, bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  // the plan text inside a code, or null when it is not a code or was damaged in transit
+  function unscrambleCode(code) {
+    if (!/^[A-Za-z0-9_-]{14,}$/.test(code)) return null;
+    let bin;
+    try { bin = atob(code.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((code.length + 3) % 4)); } catch (e) { return null; }
+    const b = Array.from(bin, function (c) { return c.charCodeAt(0); });
+    if (b.length < 10) return null;
+    const ks = keystream(b.slice(0, 4));
+    for (let i = 4; i < b.length; i++) b[i] ^= ks();
+    const body = b.slice(9);
+    if ((fnv(b.slice(4, 8).concat(body)) & 255) !== b[8]) return null;
+    return String.fromCharCode.apply(null, body);
   }
   function guideFromLink(key, f) {
     const picks = {};
@@ -1439,15 +1479,23 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
   }
   // Opens a plan link, then clears it from the address bar so the address stays short and a
   // reload keeps any changes made after opening it.
+  // Returns null when there is no link, otherwise whether the link opened.
   function applyHash() {
     const h = location.hash || '';
-    if (!h) return false;
+    if (h.length < 2) return null;
     let ok = false;
-    try { ok = /^#plan=/.test(h) ? applyLegacyLink(h) : applyLink(h.slice(1)); } catch (e) { /* a damaged link opens the saved plan instead */ }
+    try {
+      if (/^#plan=/.test(h)) ok = applyLegacyLink(h);
+      else {
+        const text = unscrambleCode(h.slice(1));
+        ok = applyLink(text != null ? text : h.slice(1)); // readable links from before codes still open
+      }
+    } catch (e) { /* a damaged link opens the saved plan instead */ }
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* file:// in some browsers */ }
     return ok;
   }
-  function planUrl() { return location.href.split('#')[0] + '#' + encodeLink(); }
+  const LINK_FAILED = 'That plan link is incomplete or damaged, so your saved plan is shown instead.';
+  function planUrl() { return location.href.split('#')[0] + '#' + scrambleLink(encodeLink()); }
 
   // ======================================================================== slot resolution
   function placeholder(raw) {
@@ -3400,16 +3448,19 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
 
   // a link opened in a tab that already shows the explorer changes only the hash, without a reload
   window.addEventListener('hashchange', function () {
-    if (!applyHash()) return;
+    const opened = applyHash();
+    if (opened === null) return;
+    if (!opened) { toast(LINK_FAILED); return; }
     if (ui.modal) closeModal();
     render();
     toast('Plan opened from the link.');
   });
 
   // ======================================================================== boot
-  applyHash();
+  const opened = applyHash();
   renderNotice();
   render();
+  if (opened === false) toast(LINK_FAILED);
 
   // test hook: lets the automated checks drive the app without relying on UI layout
   window.WSLSA = {
@@ -3420,6 +3471,8 @@ table.pd-cat .mark { color: var(--p-slot); font-weight: 700; }
     select: function (key) { const d = key.split('|')[0]; state.mode = 'guide'; state.degree = d; state.majorFor[d] = key; render(); },
     custom: function () { return state.custom ? JSON.parse(JSON.stringify(state.custom)) : null; },
     planUrl: function () { return planUrl(); },
+    linkText: function () { return encodeLink(); },
+    unscramble: function (code) { return unscrambleCode(code); },
     buildPrintDoc: function (opts) { return buildPrintDoc(buildContext(), Object.assign({}, state.exp, opts || {})); },
     preparePrint: function (opts) { Object.assign(state.exp, opts || {}); preparePrint(); },
   };

@@ -59,7 +59,7 @@ To test, install Playwright with Chromium (`npm install` then `npx playwright in
 
 `.github/workflows/pages.yml` runs on every push. It validates the data, confirms the committed `dist/` build matches the source, and runs the end-to-end checks in Chromium. When those pass on the default branch, it publishes the app to GitHub Pages as `index.html`, together with the sample PDFs. The one-time setup is **Settings > Pages > Build and deployment > Source: GitHub Actions**; until then the workflow still tests every push and leaves a notice instead of publishing.
 
-To update the live site after the workbook changes, replace the file in `data/source/`, run the three rebuild commands above, and push. The site's address follows the repository name (`wslsa`), so renaming the repository again moves the site to `https://kyosukeamagiri.github.io/<new-name>/`; GitHub does not redirect the old address. A custom domain (Settings > Pages > Custom domain) keeps one stable address regardless of the repository name.
+To update the live site after the workbook changes, replace the file in `data/source/`, run the three rebuild commands above, and push. The site's address is `https://<owner>.github.io/<repository>/`, so renaming the repository or moving it to another account or organisation moves the site, and GitHub does not redirect the old address. Nothing in the code needs to change when that happens: the deploy step fills in the page's link-preview address from wherever it publishes. A custom domain (Settings > Pages > Custom domain) keeps one stable address regardless of owner or repository name.
 
 ## Repository layout
 

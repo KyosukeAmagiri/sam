@@ -85,7 +85,7 @@ a { color: var(--crimson); text-underline-offset: 3px; }
 .tbtn:hover, .btn:hover { color: var(--crimson); }
 .tbtn-primary, .btn-primary { background: var(--crimson); color: #fff; border-color: var(--crimson); padding-inline: 20px; }
 .tbtn-primary:hover, .btn-primary:hover { background: var(--burgundy); border-color: var(--burgundy); color: #fff; }
-.btn { border-color: var(--hairline-2); background: var(--surface); }
+.btn:not(.btn-primary):not(.btn-ghost) { border-color: var(--hairline-2); background: var(--surface); }
 .tbtn-outline { border-color: var(--crimson); color: var(--crimson); }
 .tbtn-outline:hover { background: var(--crimson); color: #fff; }
 .btn-ghost { border-color: transparent; background: transparent; color: var(--muted); }
@@ -456,6 +456,12 @@ table.cat td.c-comp { color: var(--muted); font-size: 12.5px; max-width: 260px; 
 .pick .p-meta { grid-column: 2 / 3; font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .pick .p-side { grid-row: 1 / span 2; grid-column: 3; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
 .pick-empty { padding: 26px 12px; text-align: center; color: var(--muted); font-size: 14px; }
+.pick-hint { margin: 6px 10px 4px; font-size: 13px; color: var(--muted); }
+.pick-best h4 { color: var(--bronze); }
+.pick-best .pick { border-color: #ecd9a4; background: var(--gold-tint); }
+.status-best { background: var(--gold); color: #fff; }
+.pick mark, table.cat mark { background: #FCE7A6; color: inherit; padding: 0 1px; border-radius: 2px; }
+table.cat tr.extra td.c-code { color: var(--slate); }
 .custom-form { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto; gap: 8px; align-items: end; padding: 6px 8px 4px; }
 
 /* export options */

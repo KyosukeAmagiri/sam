@@ -7,6 +7,7 @@ script rebuilds every pathway from the degree sheet and checks it against Pathwa
 checks credit points, advisor notes, choice pools and catalogue coverage. Exit code 1 on failure.
 """
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -155,13 +156,32 @@ def main():
             if dupes:
                 err(f"{key}: subjects scheduled twice: {dupes}")
 
+    # ---- additional WSU subject list: added only, never replacing workbook subjects
+    extra = d.get("additionalSubjects", [])
+    workbook_codes = {c["code"] for deg in d["degrees"] for c in deg["catalogue"]}
+    for slots in pathways.values():
+        for s in slots:
+            workbook_codes.add(s["code"])
+            workbook_codes.update(o["code"] for o in s.get("options") or [])
+    codes = [x["code"] for x in extra]
+    if len(codes) != len(set(codes)):
+        err("additional subjects contain repeated codes")
+    clash = sorted(set(codes) & workbook_codes)
+    if clash:
+        err(f"additional subjects duplicate workbook subjects: {clash[:10]}")
+    for x in extra:
+        if not re.fullmatch(r"[A-Z]{4} \d{4}", x["code"]) or not x["title"] or re.search("[\u200b\u200c\u200d\u2060\ufeff]", x["title"]):
+            err(f"malformed additional subject {x}")
+    if extra and d["meta"]["counts"].get("additionalSubjects") != len(extra):
+        err("additional subject count in meta does not match the list")
+
     for w in warnings:
         print("WARN ", w)
     for e in errors:
         print("ERROR", e)
     c = d["meta"]["counts"]
     print(f"\nChecked {c['degrees']} degrees, {c['pathways']} pathways, {c['pathwayRows']} rows, "
-          f"{c['catalogueRows']} catalogue rows: {len(errors)} errors, {len(warnings)} warnings")
+          f"{c['catalogueRows']} catalogue rows, {c.get('additionalSubjects', 0)} additional subjects: {len(errors)} errors, {len(warnings)} warnings")
     sys.exit(1 if errors else 0)
 
 

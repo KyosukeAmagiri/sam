@@ -14,6 +14,7 @@
   const LOAD_CP = { FT: 40, PT: 20 };
 
   const DEG = {};
+  const GLOBAL_BY_CODE = {}; // every subject in the workbook, across all degrees
   const DEGREES = RAW.degrees.map(function (d) {
     d.catalogue = d.catalogue.map(function (r) {
       return { component: r[0], level: r[1], code: r[2], title: r[3], autumn: r[4], spring: r[5], cp: r[6], source: r[7] };
@@ -27,6 +28,7 @@
       d.byComp[c.component].push(c);
     });
     d.llbComponent = d.components.find(function (c) { return c.indexOf('LLB Alternate') === 0; });
+    d.catalogue.forEach(function (c) { if (!GLOBAL_BY_CODE[c.code]) GLOBAL_BY_CODE[c.code] = c; });
     DEG[d.code] = d;
     return d;
   });
@@ -46,6 +48,18 @@
     });
   });
 
+  // Additional WSU subjects from the subject list: selectable in elective slots ("any WSU subject") and
+  // searchable in the catalogue. The list has codes and titles only, with no session, campus or CP data.
+  const EXTRA = (RAW.extra || []).map(function (r) { return { code: r[0], title: r[1], level: 'Level ' + r[0].charAt(5), lv: +r[0].charAt(5), list: true }; });
+  const EXTRA_BY_CODE = {};
+  EXTRA.forEach(function (e) { EXTRA_BY_CODE[e.code] = e; });
+  const PICK_LIMIT = 60;
+  // Elective slots take any WSU subject: every workbook subject (with its 2027 sessions) plus the subject list.
+  const ANY_SUBJECTS = Object.keys(GLOBAL_BY_CODE).map(function (code) {
+    const c = GLOBAL_BY_CODE[code];
+    return { code: code, title: c.title, level: c.level || 'Level ' + code.charAt(5), lv: +code.charAt(5), handbook: true };
+  }).concat(EXTRA).sort(function (a, b) { return a.code < b.code ? -1 : 1; });
+
   // ======================================================================== helpers
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -63,7 +77,7 @@
   }
   function sessionValue(entry, session) { return session === 'Autumn' ? entry.autumn : entry.spring; }
   function offerFor(deg, code, session) {
-    const e = deg.byCode[code];
+    const e = deg.byCode[code] || GLOBAL_BY_CODE[code];
     if (!e) return null;
     const info = parseOffered(sessionValue(e, session));
     if (e.source && /^2026/.test(e.source)) info.y2026 = true;
@@ -73,6 +87,95 @@
   function where(s) { return 'Year ' + s.year + ' ' + s.session; }
   function fmt(n) { return String(Math.round(n * 10) / 10); }
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+  // ---- subject search: matches a code (with or without the space) or words in the title, in any
+  // order, and ranks the exact or most relevant subject first; tolerates a one-letter typo in longer words
+  function normQ(q) { return String(q || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+  function qTokens(q) { return normQ(q).split(' ').map(function (t) { return t.replace(/[^a-z0-9]/g, ''); }).filter(Boolean); }
+  function normCode(v) {
+    const c = String(v || '').toUpperCase().replace(/[\s-]+/g, '');
+    return /^[A-Z]{4}\d{4}$/.test(c) ? c.slice(0, 4) + ' ' + c.slice(4) : '';
+  }
+  function within1(a, b) {
+    if (a === b) return true;
+    if (Math.abs(a.length - b.length) > 1) return false;
+    let i = 0;
+    let j = 0;
+    let edits = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i++; j++; continue; }
+      if (++edits > 1) return false;
+      if (a.length > b.length) i++;
+      else if (b.length > a.length) j++;
+      else { i++; j++; }
+    }
+    return edits + (a.length - i) + (b.length - j) <= 1;
+  }
+  function searchScore(e, q) {
+    const nq = normQ(q);
+    if (!nq) return 1;
+    const code = e.code.toLowerCase().replace(' ', '');
+    const qc = nq.replace(/[\s-]+/g, '');
+    const title = e.title.toLowerCase();
+    if (code === qc) return 1000;
+    if (title === nq) return 950;
+    let best = 0;
+    if (qc.length >= 2 && code.indexOf(qc) === 0) best = 800 - (code.length - qc.length);
+    if (title.indexOf(nq) === 0) best = Math.max(best, 720);
+    else if (nq.length >= 3 && title.indexOf(nq) > 0) best = Math.max(best, 620);
+    const words = title.split(/[^a-z0-9]+/).filter(Boolean);
+    const toks = qTokens(nq);
+    let sum = 0;
+    let strong = true; // every word matched a whole word, the start of a word, or the code
+    for (let k = 0; k < toks.length; k++) {
+      const t = toks[k];
+      if (words.indexOf(t) >= 0) sum += 60;
+      else if (words.some(function (w) { return w.indexOf(t) === 0; })) sum += 45;
+      else if (code.indexOf(t) >= 0) sum += 40;
+      else if (title.indexOf(t) >= 0) { sum += 25; strong = false; }
+      else if (t.length >= 4 && words.some(function (w) { return within1(w, t) || (w.length > t.length && within1(w.slice(0, t.length), t)); })) { sum += 12; strong = false; }
+      else return best; // a word that matches nothing: only whole-phrase matches can still count
+    }
+    const wordScore = strong ? 640 + Math.min(sum, 100) : Math.min(sum, 590);
+    return Math.max(best, wordScore) - e.title.length / 1000;
+  }
+  function rankByQuery(list, q) {
+    if (!normQ(q)) return list.slice();
+    return list.map(function (x) { return [x, searchScore(x, q)]; })
+      .filter(function (r) { return r[1] > 0; })
+      .sort(function (a, b) { return b[1] - a[1] || (a[0].code < b[0].code ? -1 : 1); })
+      .map(function (r) { return r[0]; });
+  }
+  // wraps the parts of a title that match the search in <mark>, escaping everything else
+  function hl(text, q) {
+    const toks = qTokens(q).filter(function (t) { return t.length >= 2; });
+    if (!toks.length) return esc(text);
+    const low = text.toLowerCase();
+    const ranges = [];
+    const add = function (needle) {
+      let i = low.indexOf(needle);
+      while (needle && i >= 0) { ranges.push([i, i + needle.length]); i = low.indexOf(needle, i + needle.length); }
+    };
+    if (normQ(q).length >= 3) add(normQ(q));
+    toks.forEach(add);
+    if (!ranges.length) return esc(text);
+    ranges.sort(function (a, b) { return a[0] - b[0]; });
+    let out = '';
+    let pos = 0;
+    ranges.forEach(function (r) {
+      if (r[1] <= pos) return;
+      const start = Math.max(r[0], pos);
+      out += esc(text.slice(pos, start)) + '<mark>' + esc(text.slice(start, r[1])) + '</mark>';
+      pos = r[1];
+    });
+    return out + esc(text.slice(pos));
+  }
+  function hlCode(code, q) {
+    const qc = normQ(q).replace(/[\s-]+/g, '');
+    const c = code.toLowerCase().replace(' ', '');
+    if (qc.length < 2 || c.indexOf(qc) !== 0) return esc(code);
+    const n = qc.length <= 4 ? qc.length : qc.length + 1; // skip over the space after the prefix
+    return '<mark>' + esc(code.slice(0, n)) + '</mark>' + esc(code.slice(n));
+  }
   function cleanPoolTitle(t) { return t.replace(/\s*\(see list\)\s*/, '').trim(); }
   function today() {
     return new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -119,6 +222,7 @@
       const title = str(p.title, 140).trim();
       if (!code || !title) return;
       out[raw.id] = { code: code, title: title, custom: raw.kind === 'elective' && !!p.custom };
+      if (raw.kind === 'elective' && p.list && EXTRA_BY_CODE[code]) out[raw.id].list = true;
     });
     return out;
   }
@@ -236,8 +340,8 @@
       }
     } else {
       if (s.pick) {
-        s.code = s.pick.code; s.title = s.pick.title; s.chosen = true; s.custom = !!s.pick.custom;
-        s.offer = s.custom ? null : offerFor(deg, s.code, s.session);
+        s.code = s.pick.code; s.title = s.pick.title; s.chosen = true; s.custom = !!s.pick.custom; s.listSubject = !!s.pick.list;
+        s.offer = s.custom || s.listSubject ? null : offerFor(deg, s.code, s.session);
       } else {
         s.pending = true; s.title = placeholder(raw);
       }
@@ -329,7 +433,8 @@
       });
     }
     const pending = ctx.slots.filter(function (s) { return s.pending; });
-    return { advisor: advisor, tbc: tbc, y2026: y2026, notOffered: notOffered, campus: campus, onlineOnly: onlineOnly, pending: pending };
+    const unlisted = ctx.slots.filter(function (s) { return s.listSubject || s.custom; });
+    return { unlisted: unlisted, advisor: advisor, tbc: tbc, y2026: y2026, notOffered: notOffered, campus: campus, onlineOnly: onlineOnly, pending: pending };
   }
 
   // ======================================================================== timeline (FT / PT)
@@ -549,6 +654,7 @@
     if (state.campus && r.onlineOnly.length) checks.push('<p><b>Online only for you:</b> ' + r.onlineOnly.map(function (s) { return esc(s.code); }).join(', ') + '.</p>');
     if (r.y2026.length) checks.push('<p><b>2026 session data shown:</b> ' + r.y2026.map(function (s) { return esc(s.code) + ' ' + esc(s.title) + ' (' + where(s) + ')'; }).join('; ') + '.</p>');
     if (r.notOffered.length) checks.push('<p><b>Not offered in the planned session:</b> ' + r.notOffered.map(function (s) { return esc(s.code) + ' (' + where(s) + ')'; }).join('; ') + '.</p>');
+    if (r.unlisted.length) checks.push('<p><b>Check sessions in the Handbook:</b> ' + r.unlisted.map(function (s) { return '<button type="button" class="linkish" data-action="jump" data-slot="' + s.id + '">' + esc(s.code) + '</button> (' + where(s) + ')'; }).join(', ') + '. The WSU subject list has no session or campus data, so confirm these electives run in the session shown.</p>');
     if (r.pending.length) checks.push('<p><b>Still to choose:</b> ' + r.pending.map(function (s) { return '<button type="button" class="linkish" data-action="jump" data-slot="' + s.id + '">' + where(s) + '</button>'; }).join(', ') + '.</p>');
     if (checks.length) secs.push('<section class="adv-sec"><h3><span class="idx">' + (r.tbc.length ? '03' : '02') + '→</span>Campus &amp; choice checks</h3>' + checks.join('') + '</section>');
 
@@ -588,6 +694,7 @@
     if (s.offer && s.offer.y2026 && !s.offer.tbc) flags.push('<span class="flag flag-2026" title="2027 session not yet published; 2026 session shown">2026 data</span>');
     if (s.chosen) flags.push('<span class="flag flag-chosen">Your choice</span>');
     if (s.custom) flags.push('<span class="flag flag-chosen">Custom</span>');
+    if (s.listSubject) flags.push('<span class="flag flag-2026" title="Added from the WSU subject list">WSU subject list</span>');
     if (offCampus) flags.push('<span class="flag flag-campus">Not at ' + state.campus + '</span>');
     if (ctx.risks.advisor.some(function (a) { return a.flagSlot === s; })) flags.push('<button type="button" class="flag flag-warn" data-action="open-advisory">Check prerequisite</button>');
     if (s.offer && s.offer.none && !s.pending) flags.push('<span class="flag flag-warn">Not offered this session</span>');
@@ -622,7 +729,7 @@
     return '<div class="' + cls.join(' ') + '" id="slot-' + s.id + '" data-slot="' + s.id + '">' +
       '<div class="subj-lead">' + check + '<span class="code-pill">' + esc(codeTxt) + '</span></div>' +
       '<div class="subj-main"><div class="subj-title">' + esc(s.title) + '</div><div class="subj-meta"><span class="cat">' + esc(s.typeLabel) + '</span>' + flags.join('') + '</div>' + body + '</div>' +
-      '<div class="subj-side"><span class="pills">' + (s.pending ? '' : pillsFor(s.offer)) + '</span><span class="cp-badge">' + s.cp + ' CP</span></div></div>';
+      '<div class="subj-side"><span class="pills">' + (s.pending ? '' : s.listSubject ? '<span class="muted small" title="The WSU subject list has no session or campus data">Check Handbook</span>' : pillsFor(s.offer)) + '</span><span class="cp-badge">' + s.cp + ' CP</span></div></div>';
   }
 
   function sortSlots(list) {
@@ -687,7 +794,7 @@
         '<div><h3 class="panel-h">How the pathway is built</h3><p class="small muted" style="margin-top:0">' + esc(d.sheetIntro) + '</p>' +
         '<h3 class="panel-h" style="margin-top:18px">Advisor notes for ' + d.code + '</h3>' +
         (d.advisorNotes.length ? '<ul class="src-list">' + d.advisorNotes.map(function (n) { return '<li>' + esc(n.text) + '</li>'; }).join('') + '</ul>' : '<p class="muted small">The workbook lists no advisor notes for this degree.</p>') +
-        '<p class="small muted" style="margin-top:14px">Source: ' + esc(META.sourceWorkbook) + ' (' + c.pathwayRows.toLocaleString('en-AU') + ' pathway slots, ' + c.catalogueRows.toLocaleString('en-AU') + ' catalogue rows across ' + c.degrees + ' degrees). Subjects with sessions TBC in this degree: ' + esc(d.tbcSubjects.join(', ')) + '.</p></div></div>';
+        '<p class="small muted" style="margin-top:14px">Source: ' + esc(META.sourceWorkbook) + ' (' + c.pathwayRows.toLocaleString('en-AU') + ' pathway slots, ' + c.catalogueRows.toLocaleString('en-AU') + ' catalogue rows across ' + c.degrees + ' degrees)' + (EXTRA.length ? ', plus ' + EXTRA.length.toLocaleString('en-AU') + ' more subjects from the WSU subject list for any-subject electives' : '') + '. Subjects with sessions TBC in this degree: ' + esc(d.tbcSubjects.join(', ')) + '.</p></div></div>';
     } else if (ui.tab === 'admission') {
       html += '<div class="two-col"><div><h3 class="panel-h">Admission</h3>' +
         '<dl class="kv"><dt>Assumed knowledge / admission</dt><dd>' + esc(d.assumedKnowledge) + '</dd></dl>' +
@@ -704,7 +811,8 @@
       html += '<p class="cat-count">' + esc(d.catalogueNote || '') + '</p>' +
         '<div class="cat-filters">' +
         '<div class="field"><label for="cat-q">Search</label><input class="input" id="cat-q" type="search" placeholder="Code or title, e.g. LAWS 4008 or Revenue" value="' + esc(ui.cat.q) + '"></div>' +
-        '<div class="field"><label for="cat-comp">Component</label><div class="select-wrap"><select id="cat-comp"><option value="">All components</option>' + d.components.map(function (c) { return '<option' + (ui.cat.comp === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select></div></div>' +
+        '<div class="field"><label for="cat-comp">Component</label><div class="select-wrap"><select id="cat-comp"><option value="">All components</option>' + d.components.map(function (c) { return '<option' + (ui.cat.comp === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') +
+          (EXTRA.length ? '<option value="__extra__"' + (ui.cat.comp === '__extra__' ? ' selected' : '') + '>WSU subject list (' + EXTRA.length.toLocaleString('en-AU') + ' more subjects)</option>' : '') + '</select></div></div>' +
         '<div class="field"><label for="cat-session">Session</label><div class="select-wrap"><select id="cat-session"><option value="">Autumn or Spring</option><option value="Autumn"' + (ui.cat.session === 'Autumn' ? ' selected' : '') + '>Offered in Autumn</option><option value="Spring"' + (ui.cat.session === 'Spring' ? ' selected' : '') + '>Offered in Spring</option><option value="TBC"' + (ui.cat.session === 'TBC' ? ' selected' : '') + '>Session TBC</option></select></div></div>' +
         '<label class="check-row" style="padding-bottom:10px"><input type="checkbox" id="cat-inplan"' + (ui.cat.inPlan ? ' checked' : '') + '>In my plan</label>' +
         '</div><div id="cat-results"></div>';
@@ -716,20 +824,33 @@
 
   function renderCatalogueRows(ctx) {
     const d = ctx.deg;
-    const q = ui.cat.q.trim().toLowerCase();
-    const rows = d.catalogue.filter(function (c) {
+    const q = normQ(ui.cat.q);
+    const onlyExtra = ui.cat.comp === '__extra__';
+    const rows = onlyExtra ? [] : rankByQuery(d.catalogue, q).filter(function (c) {
       if (ui.cat.comp && c.component !== ui.cat.comp) return false;
-      if (q && (c.code + ' ' + c.title).toLowerCase().indexOf(q) < 0) return false;
       if (ui.cat.inPlan && !ctx.used[c.code]) return false;
       if (ui.cat.session === 'TBC') return c.autumn === 'TBC' || c.spring === 'TBC';
       if (ui.cat.session) { const v = sessionValue(c, ui.cat.session); return v && v !== '—' && v !== 'TBC'; }
       return true;
     });
+    // subject-list rows: shown when that component is chosen, or as extra matches for a search
+    const wantExtra = EXTRA.length && !ui.cat.session && (onlyExtra || (!ui.cat.comp && q.length >= 2));
+    const extraHits = wantExtra ? rankByQuery(EXTRA, q).filter(function (e) { return !ui.cat.inPlan || ctx.used[e.code]; }) : [];
+    const extraLimit = onlyExtra ? 300 : 100;
     function cell(v) { const o = parseOffered(v); return o.none ? '<span class="muted">—</span>' : '<span class="pills" style="justify-content:flex-start">' + pillsFor(o) + '</span>'; }
-    $('#cat-results').innerHTML = '<p class="cat-count">' + rows.length + ' of ' + d.catalogue.length + ' subjects</p><div class="table-scroll"><table class="cat"><thead><tr><th>Code</th><th>Title</th><th>Component</th><th>Level</th><th>Autumn</th><th>Spring</th><th>CP</th><th>Data source</th></tr></thead><tbody>' +
+    let note = '';
+    if (EXTRA.length && ui.cat.session && (onlyExtra || !ui.cat.comp)) note = ' · subjects from the WSU subject list have no session data, so the session filter hides them';
+    else if (extraHits.length > extraLimit) note = ' · showing the first ' + extraLimit + ' WSU subject list matches; refine the search to narrow them';
+    else if (!wantExtra && EXTRA.length && !ui.cat.comp) note = ' · search to include ' + EXTRA.length.toLocaleString('en-AU') + ' more subjects from the WSU subject list';
+    $('#cat-results').innerHTML = '<p class="cat-count">' + (onlyExtra ? extraHits.length.toLocaleString('en-AU') + ' of ' + EXTRA.length.toLocaleString('en-AU') + ' WSU subject list subjects' : rows.length + ' of ' + d.catalogue.length + ' degree subjects' + (extraHits.length ? ' + ' + extraHits.length.toLocaleString('en-AU') + ' from the WSU subject list' : '')) + note + '</p>' +
+      '<div class="table-scroll"><table class="cat"><thead><tr><th>Code</th><th>Title</th><th>Component</th><th>Level</th><th>Autumn</th><th>Spring</th><th>CP</th><th>Data source</th></tr></thead><tbody>' +
       rows.map(function (c) {
         const inPlan = !!ctx.used[c.code];
-        return '<tr class="' + (inPlan ? 'in-plan' : '') + '"><td class="c-code">' + esc(c.code) + '</td><td>' + esc(c.title) + (inPlan ? ' <span class="status status-major">In plan</span>' : '') + '</td><td class="c-comp">' + esc(c.component) + '</td><td class="small">' + esc(c.level) + '</td><td>' + cell(c.autumn) + '</td><td>' + cell(c.spring) + '</td><td class="small mono">' + c.cp + '</td><td class="small muted">' + esc(c.source) + '</td></tr>';
+        return '<tr class="' + (inPlan ? 'in-plan' : '') + '"><td class="c-code">' + hlCode(c.code, q) + '</td><td>' + hl(c.title, q) + (inPlan ? ' <span class="status status-major">In plan</span>' : '') + '</td><td class="c-comp">' + esc(c.component) + '</td><td class="small">' + esc(c.level) + '</td><td>' + cell(c.autumn) + '</td><td>' + cell(c.spring) + '</td><td class="small mono">' + c.cp + '</td><td class="small muted">' + esc(c.source) + '</td></tr>';
+      }).join('') +
+      extraHits.slice(0, extraLimit).map(function (e) {
+        const inPlan = !!ctx.used[e.code];
+        return '<tr class="extra' + (inPlan ? ' in-plan' : '') + '"><td class="c-code">' + hlCode(e.code, q) + '</td><td>' + hl(e.title, q) + (inPlan ? ' <span class="status status-major">In plan</span>' : '') + '</td><td class="c-comp">WSU subject list (any-subject electives)</td><td class="small">' + e.level + '</td><td colspan="2" class="small muted">Check the 2027 Handbook</td><td class="small muted">—</td><td class="small muted">Subject list</td></tr>';
       }).join('') + '</tbody></table></div>';
   }
 
@@ -816,7 +937,7 @@
   // ======================================================================== picker modal
   function openPicker(slotId) {
     ui.modal = 'picker';
-    ui.picker = { slotId: slotId, q: '', campusOnly: !!state.campus, showOff: false, level: '' };
+    ui.picker = { slotId: slotId, q: '', campusOnly: !!state.campus, showOff: false, level: '', ugOnly: true };
     renderPicker(true);
   }
   function closeModal() {
@@ -836,19 +957,20 @@
     const s = ctx.byId[ui.picker.slotId];
     const p = ui.picker;
     const levels = s.kind === 'llb' || s.kind === 'elective' ? ['Level 2', 'Level 3', 'Level 4'] : [];
-    let tools = '<div class="tool-row"><input class="input" id="pick-q" type="search" placeholder="Search code or title" value="' + esc(p.q) + '" style="flex:1;min-width:200px" aria-label="Search subjects"></div><div class="tool-row">';
+    let tools = '<div class="tool-row"><input class="input" id="pick-q" type="search" placeholder="' + (s.kind === 'elective' && EXTRA.length ? 'Search any WSU subject by code or title' : 'Search code or title') + '" value="' + esc(p.q) + '" style="flex:1;min-width:200px" aria-label="Search subjects"></div><div class="tool-row">';
     if (state.campus) tools += '<button type="button" class="chip" data-action="pick-campus" aria-pressed="' + p.campusOnly + '">' + esc(META.campuses[state.campus]) + ' or online only</button>';
     levels.forEach(function (l) { tools += '<button type="button" class="chip" data-action="pick-level" data-level="' + l + '" aria-pressed="' + (p.level === l) + '">' + l + '</button>'; });
+    if (s.kind === 'elective' && EXTRA.length) tools += '<button type="button" class="chip" data-action="pick-ug" aria-pressed="' + p.ugOnly + '" title="Hide level 0 and level 5 to 9 subjects from the WSU subject list">Undergraduate levels 1–4</button>';
     tools += '<button type="button" class="chip" data-action="pick-off" aria-pressed="' + p.showOff + '">Show subjects not offered in ' + s.session + '</button></div>';
 
     const custom = s.kind === 'elective'
-      ? '<div class="pick-section"><h4>Any WSU subject</h4><form class="custom-form" id="custom-form"><div class="field"><label for="cu-code">Code</label><input class="input" id="cu-code" placeholder="e.g. HUMN 1052" maxlength="12" value="' + esc(s.custom ? s.code : '') + '"></div><div class="field"><label for="cu-title">Title</label><input class="input" id="cu-title" placeholder="Subject title" maxlength="120" value="' + esc(s.custom ? s.title : '') + '"></div><button type="submit" class="btn btn-primary">Use subject</button></form><p class="small muted" style="margin:4px 8px 0">Check prerequisites and session availability in the 2027 Handbook. Many law students use electives for extra LLB Alternates, listed below.</p></div>'
+      ? '<div class="pick-section"><h4>Not on the list? Enter it yourself</h4><form class="custom-form" id="custom-form"><div class="field"><label for="cu-code">Code</label><input class="input" id="cu-code" placeholder="e.g. HUMN 1052" maxlength="12" value="' + esc(s.custom ? s.code : '') + '"></div><div class="field"><label for="cu-title">Title</label><input class="input" id="cu-title" placeholder="Subject title" maxlength="120" value="' + esc(s.custom ? s.title : '') + '"></div><button type="submit" class="btn btn-primary">Use subject</button></form><p class="small muted" style="margin:4px 8px 0">Check prerequisites and session availability in the 2027 Handbook.</p></div>'
       : '';
 
     $('#modal-root').innerHTML = '<div class="modal-backdrop" data-action="backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="picker-h">' +
       '<div class="modal-head"><div><h2 id="picker-h">' + esc(pickerTitle(s)) + '</h2><p>' + where(s) + ' · ' + s.cp + ' CP · ' + esc(ctx.deg.code) + ' ' + esc(ctx.opt.majorCode !== 'BASE' ? ctx.opt.majorLabel : ctx.deg.title) + '</p></div><button type="button" class="modal-x" data-action="modal-close" aria-label="Close">×</button></div>' +
       '<div class="modal-tools">' + tools + '</div>' +
-      '<div class="modal-body">' + custom + '<div id="pick-results"></div></div>' +
+      '<div class="modal-body"><div id="pick-results"></div>' + custom + '</div>' +
       '<div class="modal-foot"><span class="small muted">Subjects already in your plan are disabled. TBC = 2027 session not yet published.</span><div style="display:flex;gap:8px">' +
       (s.pick ? '<button type="button" class="btn" data-action="pick-clear">' + (s.kind === 'option' ? 'Reset to WSLSA pick' : 'Clear choice') + '</button>' : '') +
       '<button type="button" class="btn btn-ghost" data-action="modal-close">Cancel</button></div></div></div></div>';
@@ -860,12 +982,10 @@
     const ctx = lastCtx;
     const s = ctx.byId[ui.picker.slotId];
     const p = ui.picker;
-    const q = p.q.trim().toLowerCase();
-    const entries = poolEntries(ctx, s.raw);
+    const q = normQ(p.q);
     const groups = { offered: [], tbc: [], off: [] };
     let hiddenByCampus = 0;
-    entries.forEach(function (e) {
-      if (q && (e.code + ' ' + e.title).toLowerCase().indexOf(q) < 0) return;
+    rankByQuery(poolEntries(ctx, s.raw), q).forEach(function (e) {
       if (p.level && e.level !== p.level) return;
       const off = offerFor(ctx.deg, e.code, s.session);
       if (off.tbc) groups.tbc.push({ e: e, off: off });
@@ -875,31 +995,89 @@
         groups.offered.push({ e: e, off: off });
       }
     });
-    function row(item, disabledReason) {
-      const e = item.e;
+    // elective slots also search the WSU subject list
+    const listOn = s.kind === 'elective' && EXTRA.length > 0;
+    const shownCodes = {};
+    if (listOn) poolEntries(ctx, s.raw).forEach(function (e) { shownCodes[e.code] = 1; });
+    const listPool = listOn ? ANY_SUBJECTS.filter(function (e) { return !shownCodes[e.code] && (!p.ugOnly || (e.lv >= 1 && e.lv <= 4)) && (!p.level || e.level === p.level); }) : [];
+    const listHits = listOn && q.length >= 2 ? rankByQuery(listPool, q) : [];
+    // the single most relevant subject across every list is pinned to the top
+    // labelled only when it is an exact code or title match, or clearly ahead of the next result
+    let best = null;
+    if (q.length >= 2) {
+      const cands = groups.offered.concat(groups.tbc).map(function (i) { return { src: 'pool', item: i, e: i.e, score: searchScore(i.e, q) }; });
+      // an exact match that does not run this session is still surfaced, so students learn why
+      groups.off.forEach(function (i) { const sc = searchScore(i.e, q); if (sc >= 950) cands.push({ src: 'pool', off: true, item: i, e: i.e, score: sc }); });
+      listHits.slice(0, 2).forEach(function (e) { cands.push({ src: 'list', e: e, score: searchScore(e, q) }); });
+      cands.sort(function (a, b) { return b.score - a.score; });
+      const top = cands[0];
+      const next = cands[1] ? cands[1].score : 0;
+      if (top && (top.score >= 950 || (top.score >= 70 && top.score - next >= 40))) best = top;
+    }
+    const bestCode = best ? best.e.code : null;
+    function statusFor(e, badge) {
       const current = s.code === e.code && !s.pending;
       const clash = !current && usedElsewhere(ctx, e.code, s.id);
-      const dis = clash || disabledReason;
-      const other = sessionValue(e, s.session === 'Autumn' ? 'Spring' : 'Autumn');
-      return '<button type="button" class="pick" data-action="pick" data-code="' + esc(e.code) + '"' + (dis ? ' disabled' : '') + (current ? ' aria-current="true"' : '') + '>' +
-        '<span class="p-code">' + esc(e.code) + '</span><span class="p-title">' + esc(e.title) + '</span>' +
-        '<span class="p-side"><span class="pills">' + pillsFor(item.off) + '</span>' + (current ? '<span class="status status-essential">Selected</span>' : clash ? '<span class="status status-non">In plan</span>' : '') + '</span>' +
-        '<span class="p-meta"><span>' + esc(e.level || '') + '</span><span>' + esc(e.source || '') + '</span>' + (other && other !== '—' ? '<span>' + (s.session === 'Autumn' ? 'Spring' : 'Autumn') + ': ' + esc(other) + '</span>' : '') + (s.kind !== 'llb' && s.kind !== 'elective' ? '<span>' + esc(e.component.replace(/^.*?: /, '')) + '</span>' : '') + '</span></button>';
+      return { current: current, clash: clash, html: (badge ? '<span class="status status-best">' + badge + '</span>' : '') + (current ? '<span class="status status-essential">Selected</span>' : clash ? '<span class="status status-non">In plan</span>' : '') };
     }
+    function row(item, disabledReason, badge) {
+      const e = item.e;
+      const st = statusFor(e, badge);
+      const other = sessionValue(e, s.session === 'Autumn' ? 'Spring' : 'Autumn');
+      return '<button type="button" class="pick" data-action="pick" data-code="' + esc(e.code) + '"' + (st.clash || disabledReason ? ' disabled' : '') + (st.current ? ' aria-current="true"' : '') + '>' +
+        '<span class="p-code">' + hlCode(e.code, q) + '</span><span class="p-title">' + hl(e.title, q) + '</span>' +
+        '<span class="p-side"><span class="pills">' + pillsFor(item.off) + '</span>' + st.html + '</span>' +
+        '<span class="p-meta"><span>' + esc(e.level || '') + '</span><span>' + esc(e.source || '') + '</span>' + (other && other !== '—' ? '<span>' + (s.session === 'Autumn' ? 'Spring' : 'Autumn') + ': ' + esc(other) + '</span>' : '') + (s.kind !== 'llb' && s.kind !== 'elective' ? '<span>' + esc(e.component.replace(/^.*?: /, '')) + '</span>' : '') + (s.kind === 'elective' ? '<span>LLB Alternate</span>' : '') + '</span></button>';
+    }
+    function listRow(e, badge) {
+      const st = statusFor(e, badge);
+      const off = e.handbook ? offerFor(ctx.deg, e.code, s.session) : null;
+      return '<button type="button" class="pick" data-action="pick" data-src="list" data-code="' + esc(e.code) + '"' + (st.clash ? ' disabled' : '') + (st.current ? ' aria-current="true"' : '') + '>' +
+        '<span class="p-code">' + hlCode(e.code, q) + '</span><span class="p-title">' + hl(e.title, q) + '</span>' +
+        '<span class="p-side">' + (off ? '<span class="pills">' + pillsFor(off) + '</span>' : '<span class="muted small">Check Handbook</span>') + st.html + '</span>' +
+        '<span class="p-meta"><span>' + esc(e.level) + '</span><span>' + (e.handbook ? '2027 Handbook data' : 'WSU subject list') + '</span>' + (off && off.none ? '<span>Not offered in ' + s.session + '</span>' : '') + '</span></button>';
+    }
+    const notBest = function (i) { return (i.e || i).code !== bestCode; };
     let html = '';
-    html += '<div class="pick-section"><h4><span>Offered in ' + s.session + ' 2027</span><span>' + groups.offered.length + (hiddenByCampus ? ' · ' + hiddenByCampus + ' hidden by campus filter' : '') + '</span></h4><div class="pick-list">' +
-      (groups.offered.length ? groups.offered.map(function (i) { return row(i); }).join('') : '<div class="pick-empty">No matching subjects offered in ' + s.session + '.</div>') + '</div></div>';
-    if (groups.tbc.length) html += '<div class="pick-section"><h4><span>Session TBC (not yet published for 2027)</span><span>' + groups.tbc.length + '</span></h4><div class="pick-list">' + groups.tbc.map(function (i) { return row(i); }).join('') + '</div></div>';
+    if (best) {
+      const badge = best.score >= 950 ? 'Exact match' : 'Best match';
+      const otherSession = s.session === 'Autumn' ? 'Spring' : 'Autumn';
+      html += '<div class="pick-section pick-best"><h4><span>' + badge + '</span></h4><div class="pick-list">' + (best.src === 'list' ? listRow(best.e, badge) : row(best.item, best.off ? 'off' : false, badge)) + '</div>' +
+        (best.off ? '<p class="pick-hint">' + esc(best.e.code) + ' runs only in ' + otherSession + ', so it cannot go in this ' + s.session + ' slot.</p>' : '') + '</div>';
+    }
+    const offered = groups.offered.filter(notBest);
+    const tbc = groups.tbc.filter(notBest);
+    const offeredHead = (s.kind === 'elective' ? 'LLB Alternates offered in ' : 'Offered in ') + s.session + ' 2027';
+    if (offered.length || !q || s.kind !== 'elective') {
+      html += '<div class="pick-section"><h4><span>' + offeredHead + '</span><span>' + offered.length + (hiddenByCampus ? ' · ' + hiddenByCampus + ' hidden by campus filter' : '') + '</span></h4><div class="pick-list">' +
+        (offered.length ? offered.map(function (i) { return row(i); }).join('') : '<div class="pick-empty">' + (best && best.src === 'pool' ? 'No other matches' : 'No matching subjects') + ' offered in ' + s.session + '.</div>') + '</div></div>';
+    } else {
+      html += '<p class="pick-hint">No ' + (best && best.src === 'pool' ? 'other ' : '') + 'LLB Alternates offered in ' + s.session + ' match “' + esc(p.q.trim()) + '”.</p>';
+    }
+    if (tbc.length) html += '<div class="pick-section"><h4><span>Session TBC (not yet published for 2027)</span><span>' + tbc.length + '</span></h4><div class="pick-list">' + tbc.map(function (i) { return row(i); }).join('') + '</div></div>';
+    if (listOn) html += extraPickSection(p, q, listPool, listHits.filter(notBest), listRow, best && best.src === 'list');
+    groups.off = groups.off.filter(notBest);
     if (p.showOff && groups.off.length) html += '<div class="pick-section"><h4><span>Not offered in ' + s.session + '</span><span>' + groups.off.length + '</span></h4><div class="pick-list">' + groups.off.map(function (i) { return row(i, 'off'); }).join('') + '</div></div>';
-    else if (groups.off.length) html += '<p class="small muted" style="margin:10px 8px">' + plural(groups.off.length, 'subject') + ' in this list run only in ' + (s.session === 'Autumn' ? 'Spring' : 'Autumn') + '.</p>';
+    else if (groups.off.length) html += '<p class="small muted" style="margin:10px 8px">' + plural(groups.off.length, 'matching subject') + ' in this list ' + (groups.off.length === 1 ? 'runs' : 'run') + ' only in ' + (s.session === 'Autumn' ? 'Spring' : 'Autumn') + '.</p>';
     $('#pick-results').innerHTML = html;
   }
-  function choosePick(code) {
+  // Elective slots can also take any subject from the WSU subject list.
+  function extraPickSection(p, q, pool, hits, listRow, bestFromList) {
+    const head = '<div class="pick-section"><h4><span>Any WSU subject · subject list and 2027 Handbook</span><span>';
+    if (q.length < 2) {
+      return head + pool.length.toLocaleString('en-AU') + ' subjects</span></h4><p class="pick-hint">Type a subject code (for example ACCT2004) or words from its name above to search ' + pool.length.toLocaleString('en-AU') + ' more WSU subjects' + (p.ugOnly ? ' at undergraduate levels 1–4' : '') + '. The list gives codes and titles only, so check sessions and prerequisites in the 2027 Handbook.</p></div>';
+    }
+    return head + hits.length.toLocaleString('en-AU') + (hits.length === 1 ? ' match' : ' matches') + '</span></h4><div class="pick-list">' +
+      (hits.length ? hits.slice(0, PICK_LIMIT).map(function (e) { return listRow(e); }).join('') : '<div class="pick-empty">No ' + (bestFromList ? 'other ' : '') + 'subjects in the WSU subject list match “' + esc(p.q.trim()) + '”' + (p.ugOnly ? ' at levels 1–4. Turn off “Undergraduate levels 1–4” to search every level' : '') + '.</div>') + '</div>' +
+      (hits.length > PICK_LIMIT ? '<p class="pick-hint">Showing the ' + PICK_LIMIT + ' most relevant of ' + hits.length.toLocaleString('en-AU') + '. Add more of the code or name to narrow the list.</p>' : '') + '</div>';
+  }
+  function choosePick(code, src) {
     const ctx = lastCtx;
     const s = ctx.byId[ui.picker.slotId];
-    const e = poolEntries(ctx, s.raw).find(function (x) { return x.code === code; });
+    const e = src === 'list' ? (EXTRA_BY_CODE[code] || GLOBAL_BY_CODE[code]) : poolEntries(ctx, s.raw).find(function (x) { return x.code === code; });
     if (!e) return;
     if (s.kind === 'option' && code === s.raw.code) setPick(s.id, null);
+    else if (src === 'list' && EXTRA_BY_CODE[code]) setPick(s.id, { code: e.code, title: e.title, list: true });
     else setPick(s.id, { code: e.code, title: e.title });
     closeModal();
     render();
@@ -972,7 +1150,7 @@
       if (s.chosen) title = '◆ ' + title;
       html += '<tr class="' + cls + '">' + (ticks ? '<td class="pd-tick">' + (s.done ? '✓' : '') + '</td>' : '') +
         '<td class="pd-code">' + esc(s.pending ? '—' : s.code) + '</td><td class="pd-title">' + title + '</td>' +
-        '<td class="pd-camp">' + (s.pending ? '' : pdOffer(s.offer)) + '</td><td class="pd-cp">' + s.cp + '</td></tr>';
+        '<td class="pd-camp">' + (s.pending ? '' : s.listSubject ? '<span class="pp-26">see Handbook</span>' : pdOffer(s.offer)) + '</td><td class="pd-cp">' + s.cp + '</td></tr>';
     });
     return html + '</tbody></table>';
   }
@@ -1000,6 +1178,7 @@
     if (tbcText) lines.push('<li><b>Session TBC:</b> ' + tbcText + '. WSU has not yet published the 2027 session; verify closer to enrolment.</li>');
     if (r.y2026.length) lines.push('<li><b>2026 session shown:</b> ' + r.y2026.map(function (s) { return esc(s.code) + ' (' + where(s) + ')'; }).join('; ') + '.</li>');
     if (state.campus && r.campus.length) lines.push('<li><b>Not at ' + esc(META.campuses[state.campus]) + ' or online:</b> ' + r.campus.map(function (s) { return esc(s.code) + ' (' + s.offer.codes.join(' ') + ')'; }).join('; ') + '.</li>');
+    if (r.unlisted.length) lines.push('<li><b>Check in the Handbook:</b> ' + r.unlisted.map(function (s) { return esc(s.code) + ' (' + where(s) + ')'; }).join('; ') + '. Chosen from the WSU subject list or entered by hand, so no session data is shown.</li>');
     if (r.pending.length) lines.push('<li><b>Still to choose:</b> ' + plural(r.pending.length, 'slot') + ' (' + r.pending.map(where).join(', ') + ').</li>');
     if (lines.length) html += '<div class="pd-box pd-tbcbox"><h3>Session &amp; availability checks</h3><ul>' + lines.join('') + '</ul></div>';
     return html;
@@ -1236,7 +1415,8 @@
         render();
         break;
       }
-      case 'pick': choosePick(el.dataset.code); break;
+      case 'pick': choosePick(el.dataset.code, el.dataset.src); break;
+      case 'pick-ug': ui.picker.ugOnly = !ui.picker.ugOnly; el.setAttribute('aria-pressed', ui.picker.ugOnly); renderPickerResults(); break;
       case 'pick-clear': { const id = ui.picker.slotId; setPick(id, null); closeModal(); render(); flashSlot(id); break; }
       case 'pick-campus': ui.picker.campusOnly = !ui.picker.campusOnly; el.setAttribute('aria-pressed', ui.picker.campusOnly); renderPickerResults(); break;
       case 'pick-off': ui.picker.showOff = !ui.picker.showOff; el.setAttribute('aria-pressed', ui.picker.showOff); renderPickerResults(); break;
@@ -1253,11 +1433,14 @@
   document.addEventListener('submit', function (ev) {
     if (ev.target.id !== 'custom-form') return;
     ev.preventDefault();
-    const code = $('#cu-code').value.trim().toUpperCase().replace(/\s+/g, ' ');
+    const typed = $('#cu-code').value.trim().toUpperCase().replace(/\s+/g, ' ');
+    const code = normCode(typed) || typed;
     const title = $('#cu-title').value.trim();
     if (!code || !title) { toast('Enter both a subject code and a title.'); return; }
     const id = ui.picker.slotId;
-    setPick(id, { code: code.slice(0, 16), title: title.slice(0, 140), custom: true });
+    if (EXTRA_BY_CODE[code]) setPick(id, { code: code, title: EXTRA_BY_CODE[code].title, list: true });
+    else if (GLOBAL_BY_CODE[code]) setPick(id, { code: code, title: GLOBAL_BY_CODE[code].title });
+    else setPick(id, { code: code.slice(0, 16), title: title.slice(0, 140), custom: true });
     closeModal();
     render();
     flashSlot(id);
@@ -1288,6 +1471,12 @@
     const t = ev.target;
     if (t.id === 'pick-q') { ui.picker.q = t.value; renderPickerResults(); }
     else if (t.id === 'cat-q') { ui.cat.q = t.value; renderCatalogueRows(lastCtx); }
+    else if (t.id === 'cu-code') {
+      const known = EXTRA_BY_CODE[normCode(t.value)] || GLOBAL_BY_CODE[normCode(t.value)];
+      const title = $('#cu-title');
+      if (known && (!title.value || title.dataset.auto)) { title.value = known.title; title.dataset.auto = '1'; }
+      else if (!known && title.dataset.auto) { title.value = ''; delete title.dataset.auto; }
+    } else if (t.id === 'cu-title') { delete t.dataset.auto; }
   });
 
   document.addEventListener('keydown', function (ev) {
@@ -1313,6 +1502,7 @@
     state: function () { return JSON.parse(JSON.stringify(state)); },
     context: function () { return buildContext(); },
     keys: function () { return Object.keys(PATH); },
+    extraCount: function () { return EXTRA.length; },
     select: function (key) { const d = key.split('|')[0]; state.degree = d; state.majorFor[d] = key; render(); },
     buildPrintDoc: function (opts) { return buildPrintDoc(buildContext(), Object.assign({}, state.exp, opts || {})); },
     preparePrint: function (opts) { Object.assign(state.exp, opts || {}); preparePrint(); },

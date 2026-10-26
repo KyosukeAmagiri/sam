@@ -45,11 +45,13 @@ def payload(d):
                          for s in slots]
     meta = {k: d["meta"][k] for k in ("title", "explorerIntro", "overviewNote", "legend", "campuses",
                                       "sourceWorkbook", "extractedOn", "counts")}
+    meta["subjectList"] = d["meta"].get("subjectList")
     return {
         "meta": meta,
         "degrees": degrees,
         "options": [{k: o[k] for k in OPTION_FIELDS} for o in d["options"]],
         "pathways": pathways,
+        "extra": [[x["code"], x["title"]] for x in d.get("additionalSubjects", [])],
     }
 
 

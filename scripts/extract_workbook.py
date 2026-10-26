@@ -2,7 +2,7 @@
 """Extract every sheet of the WSLSA 2027 Degree Guides workbook into one JSON data store.
 
 Usage:
-    python3 scripts/extract_workbook.py ["data/source/WSLSA Degree Guides 2027.xlsx"] [data/wslsa-2027.json]
+    python3 scripts/extract_workbook.py ["data/source/WSLSA Degree Guides 2027.xlsx"] [data/wslsa-2027.json] ["data/source/Subject List.xlsx"]
 
 Requires openpyxl. segno is optional and only used to pre-render the handbook QR codes as SVG.
 
@@ -11,6 +11,10 @@ rows and every degree sheet (key facts, program structure, recommended pathways,
 schedules, the full subject catalogue and advisor notes) are written to the output. On top of the raw
 data the extractor adds a small amount of derived metadata that the explorer needs (resolved choice
 pools, parsed campus codes, parsed advisor notes), and it fails loudly if anything cannot be resolved.
+
+If the optional WSU subject list is present, its subjects are added as `additionalSubjects` for elective
+slots and the catalogue. Any code already in the degree guide workbook is skipped, so nothing from the
+workbook is replaced.
 """
 import io
 import json
@@ -28,6 +32,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SRC = ROOT / "data" / "source" / "WSLSA Degree Guides 2027.xlsx"
 DEFAULT_OUT = ROOT / "data" / "wslsa-2027.json"
+DEFAULT_SUBJECTS = ROOT / "data" / "source" / "Subject List.xlsx"
+# zero-width characters appear inside many titles in the subject list and would break search
+INVISIBLE_RE = re.compile("[\u200b\u200c\u200d\u2060\ufeff]")
 
 CODE_RE = re.compile(r"[A-Z]{4} \d{4}")
 SESSIONS = ("Autumn", "Spring")
@@ -475,11 +482,46 @@ def qr_svg(url):
     return buf.getvalue().decode("utf-8")
 
 
+# --------------------------------------------------------------------------- additional WSU subject list
+
+def extract_subject_list(path, known_codes):
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb["Subject List"] if "Subject List" in wb.sheetnames else wb.worksheets[0]
+    added, seen = [], set()
+    stats = OrderedDict([("rows", 0), ("added", 0), ("skippedExisting", 0), ("skippedRepeat", 0),
+                         ("skippedInvalid", 0), ("titlesCleaned", 0)])
+    for r in ws.iter_rows(values_only=True):
+        if not r or all(v is None for v in r):
+            continue
+        stats["rows"] += 1
+        m = re.fullmatch(r"([A-Z]{4})\s?(\d{4})", str(r[0] or "").strip())
+        raw_title = str(r[1] or "") if len(r) > 1 else ""
+        title = re.sub(r"\s+", " ", INVISIBLE_RE.sub("", raw_title)).strip()
+        if not m or not title:
+            stats["skippedInvalid"] += 1
+            continue
+        code = f"{m.group(1)} {m.group(2)}"
+        if code in known_codes:
+            stats["skippedExisting"] += 1
+            continue
+        if code in seen:
+            stats["skippedRepeat"] += 1
+            continue
+        seen.add(code)
+        if title != raw_title.strip():
+            stats["titlesCleaned"] += 1
+        added.append({"code": code, "title": title, "level": int(code[5])})
+    stats["added"] = len(added)
+    stats["source"] = path.name
+    return sorted(added, key=lambda x: x["code"]), stats
+
+
 # --------------------------------------------------------------------------- main
 
 def main():
     src = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SRC
     out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_OUT
+    subjects_path = Path(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_SUBJECTS
     wb = openpyxl.load_workbook(src, data_only=True)
 
     explorer = rows_of(wb["Pathway Explorer"])
@@ -527,6 +569,16 @@ def main():
             c["springInfo"] = parse_offered(c["spring"])
         degrees.append(d)
 
+    known_codes = {c["code"] for d in degrees for c in d["catalogue"]}
+    for slots in pathways.values():
+        for s in slots:
+            if CODE_RE.fullmatch(s["code"] or ""):
+                known_codes.add(s["code"])
+            known_codes.update(o["code"] for o in s.get("options") or [])
+    extra, extra_stats = ([], None)
+    if subjects_path.exists():
+        extra, extra_stats = extract_subject_list(subjects_path, known_codes)
+
     data = OrderedDict([
         ("meta", OrderedDict([
             ("title", explorer_title),
@@ -543,12 +595,15 @@ def main():
                 ("pathwayRows", pathway_rows),
                 ("catalogueRows", sum(len(d["catalogue"]) for d in degrees)),
                 ("advisorNotes", sum(len(n["raw"]) for n in notes.values())),
+                ("additionalSubjects", len(extra)),
             ])),
+            ("subjectList", extra_stats),
         ])),
         ("degreeDropdown", dropdown),
         ("degrees", degrees),
         ("options", options),
         ("pathways", pathways),
+        ("additionalSubjects", extra),
     ])
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -558,6 +613,10 @@ def main():
           f"{c['degrees']} degrees, {c['majorOptions']} degree/major options, {c['pathways']} pathways, "
           f"{c['pathwayRows']} pathway rows, {c['catalogueRows']} catalogue rows, {c['advisorNotes']} advisor notes"
           + ("" if degrees[0]["qrSvg"] else " (segno not installed: QR codes skipped)"))
+    if extra_stats:
+        print(f"Subject list {extra_stats['source']}: {extra_stats['rows']} rows, {extra_stats['added']} added, "
+              f"{extra_stats['skippedExisting']} already in the workbook, {extra_stats['skippedRepeat']} repeated, "
+              f"{extra_stats['skippedInvalid']} invalid, {extra_stats['titlesCleaned']} titles cleaned of hidden characters")
 
 
 if __name__ == "__main__":

@@ -184,6 +184,55 @@ async function renderPdf(page, key, mode, orient, file) {
   check(await p2.evaluate(() => !!WSLSA.context().key), 'a malformed plan link should fall back gracefully');
   await fresh.close();
 
+  // ---------------------------------------------------------------- WSU subject list and ranked elective search
+  check(await page.evaluate(() => WSLSA.extraCount()) === 3407, 'all 3,407 new subjects from the subject list should be loaded');
+  await page.evaluate(() => WSLSA.select('2848|BASE'));
+  await page.click('#slot-2S2 [data-action="picker-open"]');
+  check(!/Any WSU subject/.test(await page.textContent('#pick-results')), 'LLB Alternate slots must not offer the any-subject list');
+  await page.keyboard.press('Escape');
+  await page.click('#slot-1S4 [data-action="picker-open"]');
+  for (const q of ['ACCT2004', 'acct 2004', 'ACCT 2004']) {
+    await page.fill('#pick-q', q);
+    check(/Exact match/.test(await page.textContent('.pick-best')) && /ACCT 2004/.test(await page.textContent('.pick-best')), `"${q}" should pin ACCT 2004 as the exact match`);
+  }
+  for (const q of ['intermediate financial', 'financial intermediate', 'intermidiate financial']) {
+    await page.fill('#pick-q', q);
+    const best = await page.$('.pick-best');
+    check(best && /ACCT 2004/.test(await best.textContent()), `"${q}" should rank ACCT 2004 Intermediate Financial Accounting first`);
+  }
+  await page.fill('#pick-q', 'Revenue Law');
+  check(/LAWS 4008/.test(await page.textContent('.pick-best')) && /runs only in Autumn/.test(await page.textContent('.pick-best')) && await page.$eval('.pick-best .pick', b => b.disabled),
+    '"Revenue Law" in a Spring slot should surface LAWS 4008 as an exact match that runs only in Autumn');
+  await page.fill('#pick-q', 'ACCT1007');
+  check(/ACCT 1007/.test(await page.textContent('.pick-best')) && /PC|BC|CA/.test(await page.textContent('.pick-best')), 'workbook subjects from other degrees (ACCT 1007) should be searchable as electives, with their sessions');
+  await page.fill('#pick-q', 'psychology');
+  check(!(await page.$('.pick-best')) && (await page.$$('#pick-results .pick[data-src="list"]')).length > 5, 'a broad search should list ranked results without forcing a best match');
+  await page.fill('#pick-q', 'acct2004');
+  await page.click('.pick-best .pick');
+  const listPick = await page.evaluate(() => { const s = WSLSA.context().byId['1S4']; return [s.code, s.listSubject, s.offer]; });
+  check(listPick[0] === 'ACCT 2004' && listPick[1] === true && listPick[2] === null, 'choosing from the subject list should store a subject-list elective');
+  check(/Check Handbook/.test(await page.textContent('#slot-1S4')), 'subject-list electives should point students to the Handbook for sessions');
+  const listUrl = await page.evaluate(() => location.href);
+  const ctx2 = await browser.newContext();
+  const p3 = await ctx2.newPage();
+  await p3.goto(listUrl);
+  check(await p3.evaluate(() => { const s = WSLSA.context().byId['1S4']; return s.code === 'ACCT 2004' && s.listSubject; }), 'plan links should keep subject-list electives');
+  await ctx2.close();
+  await page.click('#slot-2S3 [data-action="picker-open"]');
+  await page.fill('#cu-code', 'hlth1006');
+  check(await page.inputValue('#cu-title') === 'Movement and Skill Development', 'typing a known code in the manual form should fill the title');
+  await page.keyboard.press('Escape');
+  await page.click('#tab-catalogue');
+  await page.selectOption('#cat-comp', '__extra__');
+  await page.fill('#cat-q', 'intermediate financial');
+  check(/ACCT 2004/.test(await page.textContent('#cat-results')), 'catalogue should search the WSU subject list');
+  await page.selectOption('#cat-comp', '');
+  await page.fill('#cat-q', 'Revenue');
+  const revenueRows = await page.$$eval('#cat-results tbody tr', trs => trs.filter(tr => tr.querySelector('.c-code').textContent === 'LAWS 4008').length);
+  check(revenueRows === 1, `LAWS 4008 should appear once in a combined search, appeared ${revenueRows} times`);
+  await page.fill('#cat-q', '');
+  await page.click('#tab-structure');
+
   // ---------------------------------------------------------------- redesign: roman numerals, advisory, tabs, checkbox
   await page.evaluate(() => WSLSA.select('2843|BASE'));
   const romans = await page.$$eval('#grid .year-seal', els => els.map(e => e.textContent));

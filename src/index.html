@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WSLSA 2027 Pathway Explorer</title>
+<meta name="description" content="Interactive 2027 degree pathway explorer and PDF guide generator for Western Sydney University law students, built from the WSLSA 2027 Degree Guides workbook.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&display=swap">
+<style>
+/*@@STYLES@@*/
+</style>
+<style>
+/*@@PRINT_STYLES@@*/
+</style>
+<style id="page-size">@page { size: A4 portrait; margin: 12mm; }</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="masthead">
+    <div class="masthead-inner">
+      <a class="brand" href="#" data-action="top" aria-label="WSLSA 2027 Degree Pathway Explorer">
+        <span class="brand-mark">WSLSA</span>
+        <span class="brand-text"><span class="brand-year">2027</span> Degree Pathway Explorer</span>
+      </a>
+      <nav class="mast-actions" aria-label="Plan actions">
+        <button type="button" class="btn btn-ghost" data-action="share" title="Copy a link that restores this exact plan">Copy plan link</button>
+        <button type="button" class="btn btn-ghost" data-action="reset" title="Clear choices and progress for this pathway">Reset pathway</button>
+        <button type="button" class="btn btn-primary" data-action="export-open">Export PDF guide</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap" id="main">
+    <section class="hero">
+      <p class="eyebrow">Western Sydney Law Students' Association · 2027 Student Handbook data</p>
+      <h1 id="hero-title">Degree Pathway Explorer</h1>
+      <p class="lede" id="hero-lede"></p>
+    </section>
+
+    <section class="card controls" aria-label="Choose your degree" id="controls"></section>
+    <section class="facts" id="facts" aria-label="Key facts"></section>
+    <section id="progress" aria-label="Progress"></section>
+    <section class="risks" id="risks" aria-label="Warnings for this pathway"></section>
+    <section class="legend card" id="legend" aria-label="Legend"></section>
+    <section class="grid" id="grid" aria-label="Recommended pathway"></section>
+    <section class="details card" id="details" aria-label="Degree details"></section>
+
+    <footer class="site-foot" id="site-foot"></footer>
+  </main>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="print-root" aria-hidden="true"></div>
+
+<script type="application/json" id="wslsa-data">@@DATA@@</script>
+<script>
+/*@@APP@@*/
+</script>
+</body>
+</html>

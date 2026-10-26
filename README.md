@@ -6,7 +6,7 @@ An interactive degree pathway explorer and PDF guide generator for Western Sydne
 
 Sample PDF exports: [2788 Accounting, custom pathway (Mode A)](https://kyosukeamagiri.github.io/wslsa/samples/2788-T046-accounting-custom-pathway-A4-portrait.pdf) · [2788 Accounting, complete handbook sheet (Mode B)](https://kyosukeamagiri.github.io/wslsa/samples/2788-T046-accounting-handbook-sheet-A4-portrait.pdf) · [2848 Laws, custom pathway, landscape (Mode A)](https://kyosukeamagiri.github.io/wslsa/samples/2848-laws-custom-pathway-A4-landscape.pdf)
 
-The same app is a single self-contained file, `dist/wslsa-pathway-explorer.html` (about 590 KB), with every degree, pathway and subject embedded, so it also works offline, can be emailed, or can be hosted anywhere static (SharePoint, a WSLSA website). Nothing is sent anywhere: a student's choices are saved in their own browser, and the Copy plan link button carries a plan to another device.
+The same app is a single self-contained file, `dist/wslsa-pathway-explorer.html` (about 600 KB), with every degree, pathway and subject embedded, so it also works offline, can be emailed, or can be hosted anywhere static (SharePoint, a WSLSA website). Nothing is sent anywhere: a student's choices are saved in their own browser, and the Copy Share Link button carries a plan to another device.
 
 ## What it does
 
@@ -18,14 +18,14 @@ The same app is a single self-contained file, `dist/wslsa-pathway-explorer.html`
 
 **Campus and risk intelligence.** Campus codes render as colour-coded pills with full campus names on hover; clicking one (or using the Primary campus selector) highlights that campus, flags units that run neither there nor online, and filters the pickers. A risk banner surfaces the advisor prerequisite notes from `Lists` (Note 1 to Note 4) scoped to the selection, the four core law subjects with unpublished 2027 sessions (LAWS 3099, 3101, 3102, 3103) plus any chosen subject that is TBC, subjects still using 2026 session data, campus gaps and open choices. Where the pathway itself bears on a prerequisite gap, the banner says so, for example that picking NATS 3044 in the Year 2 Spring choice slot places it before NATS 3055.
 
-**PDF export.** Export PDF guide opens a settings panel with a live A4 preview and a page estimate that matches Chromium's real pagination. Output goes through the browser's print engine, so text and tables stay vector-sharp, and all tints and badges are forced on with `print-color-adjust: exact`.
+**PDF export.** Print / Save PDF → prints the guide in one click with the last-used settings; PDF Options opens a settings panel with a live A4 preview and a page estimate that matches Chromium's real pagination. Every guide carries the WSLSA masthead and the student's own plan link. Output goes through the browser's print engine, so text and tables stay vector-sharp, and all tints and badges are forced on with `print-color-adjust: exact`.
 
 | Mode | Contents | Length (all 48 pathways tested) |
 | --- | --- | --- |
 | A: Custom student pathway | Header (degree, major/minor, CP, duration, intake, campuses, CRICOS, Handbook URL and QR code), colour-coded Autumn/Spring grid with your choices marked ◆, campus codes, session CP and optional completion ticks, then advisor warnings, session checks, accreditation, exit awards, campus legend and the WSLSA disclaimer | 1 to 2 pages, portrait or landscape |
 | B: Complete handbook sheet | The full pathway on page 1, the complete LLB Alternate Subjects table on page 2 (filterable by session, campus and TBC status), any other choice pools the pathway uses, then accreditation, assumed knowledge, legend and disclaimer | 3 pages portrait; 3 landscape (4 for 2758, which has three extra choice pools) |
 
-**Also included.** A full subject catalogue browser for each degree (all components, filterable by session and search, with units in your plan highlighted), program structure and accreditation panels, a "Copy plan link" button that encodes the degree, choices and progress into the URL, light and dark themes, and a layout that works at phone width.
+**Also included.** A full subject catalogue browser for each degree (all components, filterable by session and search, with units in your plan highlighted), program structure and accreditation panels, a "Copy Share Link" button that encodes the degree, choices and progress into the URL, and a layout that works at phone width. The visual design follows wslsa.com.au: burgundy and charcoal bands, gold accents, Cormorant Garamond display type, Roman-numeral year seals and tracked capital labels.
 
 ## Data pipeline
 

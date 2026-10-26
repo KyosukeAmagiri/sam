@@ -89,7 +89,7 @@
       default: return 'nonlaw';
     }
   }
-  const TYPE_LABEL = { law: 'Law core', nonlaw: 'Non-law core', major: 'Major / minor', llb: 'LLB alternate', choice: 'Choice', elective: 'Elective' };
+  const TYPE_LABEL = { law: 'Law core', nonlaw: 'Non-law core', major: 'Major / minor', llb: 'LLB Alternate', choice: 'Choice', elective: 'Elective' };
   function typeLabel(raw, opt) {
     if (raw.type === 'Major') return opt.majorKind === 'Minor' ? 'Minor' : 'Major';
     if (raw.type === 'Major (option)') return 'Major option';
@@ -100,7 +100,7 @@
   const STORE_KEY = 'wslsa-2027-pathway-explorer:v1';
   const DEFAULT_EXPORT = { mode: 'A', orient: 'portrait', ticks: true, llbSession: 'all', llbCampus: false, llbTbc: true };
   let state = sanitise(readStore());
-  const ui = { tab: 'structure', cat: { q: '', comp: '', session: '', inPlan: false }, modal: null, picker: null };
+  const ui = { tab: 'structure', cat: { q: '', comp: '', session: '', inPlan: false }, modal: null, picker: null, whyOpen: false, advisoryOpen: false };
 
   function readStore() {
     try { return JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { return null; }
@@ -202,7 +202,7 @@
 
   // ======================================================================== slot resolution
   function placeholder(raw) {
-    if (raw.kind === 'llb') return 'LLB Alternate subject: choose from the list';
+    if (raw.kind === 'llb') return 'LLB Alternate subject';
     if (raw.kind === 'pool') return 'Choose: ' + cleanPoolTitle(raw.title);
     if (raw.kind === 'elective') return 'Elective (any WSU subject)';
     if (raw.kind === 'inline') return 'Choose one of the options below';
@@ -361,13 +361,34 @@
   }
 
   // ======================================================================== render: pieces
+  const ROMAN = [['M', 1000], ['CM', 900], ['D', 500], ['CD', 400], ['C', 100], ['XC', 90], ['L', 50], ['XL', 40], ['X', 10], ['IX', 9], ['V', 5], ['IV', 4], ['I', 1]];
+  function roman(n) {
+    let out = '';
+    ROMAN.forEach(function (r) { while (n >= r[1]) { out += r[0]; n -= r[1]; } });
+    return out;
+  }
+  // Card family: law, non-law and major cards are fixed; every slot the student fills is a gold "choice" card.
+  function kindClass(s) {
+    if (s.kind === 'llb' || s.kind === 'pool' || s.kind === 'inline' || s.kind === 'elective') return 'k-slot';
+    if (s.group === 'law') return 'k-law';
+    if (s.group === 'major') return 'k-major';
+    return 'k-nonlaw';
+  }
+  function titleHTML(t) { return esc(t).replace(/\//g, '<span class="slash">/</span>'); }
+  function selectionLabel(ctx) {
+    const o = ctx.opt;
+    if (o.majorCode !== 'BASE') return o.majorLabel;
+    const built = builtInMajor(ctx.deg);
+    return built ? 'Built-in major: ' + built : 'Fixed structure (no major or minor)';
+  }
+
   function pill(code, opts) {
     opts = opts || {};
     const name = CAMPUS_NAMES[code] || code;
     let cls = 'pill cp-' + code;
-    if (state.campus && code !== 'TBC') cls += (code === state.campus || code === 'ON') ? ' on' : ' dim';
-    const actionable = PRIMARY_CAMPUSES.indexOf(code) >= 0 && !opts.static;
-    const tip = name + (code === state.campus ? ' (your campus: click to clear)' : actionable ? ' (click to set as your campus)' : '');
+    if (state.campus && code !== 'TBC') cls += code === state.campus ? ' on' : code === 'ON' ? ' online' : ' dim';
+    const actionable = PRIMARY_CAMPUSES.indexOf(code) >= 0;
+    const tip = name + (code === state.campus ? ' · your campus (click to clear)' : actionable ? ' · click to highlight' : code === 'ON' && state.campus ? ' · available to you online' : '');
     // only legend pills take keyboard focus; the Primary campus selector covers the rest
     return '<span class="' + cls + '"' + (opts.focus ? ' tabindex="0"' : '') + ' data-tip="' + esc(tip) + '"' + (actionable ? ' role="button" data-action="campus-pill" data-campus="' + code + '"' : '') + ' aria-label="' + esc(name) + '">' + esc(code) + '</span>';
   }
@@ -379,62 +400,11 @@
       (offer.y2026 ? '<span class="pill pill-y2026" data-tip="2027 session not yet published: 2026 session shown">2026</span>' : '');
   }
   const LOCK_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+  const ALERT_ICON = '<svg class="adv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 10v4.5M12 17.2v.3" stroke-linecap="round"/></svg>';
 
   function builtInMajor(deg) {
     const m = deg.components.map(function (c) { return /^(\w{4}) (.+?), (Testamur Major|Major|Minor)/.exec(c); }).filter(Boolean)[0];
     return m ? m[1] + ' ' + m[2] + ', ' + m[3] : null;
-  }
-
-  function renderControls(ctx) {
-    const deg = ctx.deg;
-    const single = DEGREES.filter(function (d) { return d.code === '2848'; });
-    const dbl = DEGREES.filter(function (d) { return d.code !== '2848'; });
-    function degOpt(d) { return '<option value="' + d.code + '"' + (d.code === deg.code ? ' selected' : '') + '>' + esc(d.label) + '</option>'; }
-    const degSelect = '<div class="select-wrap"><select id="sel-degree" aria-label="Degree">' +
-      '<optgroup label="Single degree">' + single.map(degOpt).join('') + '</optgroup>' +
-      '<optgroup label="Double degrees">' + dbl.map(degOpt).join('') + '</optgroup></select></div>';
-
-    let majorField;
-    if (deg.fixedStructure) {
-      const built = builtInMajor(deg);
-      majorField = '<div class="locked" id="major-locked">' + LOCK_ICON + '<span><b>Fixed structure.</b> No major or minor to choose' + (built ? '; built-in: ' + esc(built) : '') + '.</span></div>';
-    } else {
-      const opts = deg.options.map(function (k) { return OPT[k]; });
-      const letters = Array.from(new Set(opts.map(function (o) { return o.groupLetter; })));
-      const optHtml = function (o) { return '<option value="' + esc(o.pathwayKey) + '"' + (o.pathwayKey === ctx.key ? ' selected' : '') + '>' + esc(o.majorLabel) + '</option>'; };
-      let inner;
-      if (letters.length > 1) {
-        inner = letters.map(function (L) {
-          return '<optgroup label="Pathway ' + L + '">' + opts.filter(function (o) { return o.groupLetter === L; }).map(optHtml).join('') + '</optgroup>';
-        }).join('');
-      } else {
-        inner = opts.map(optHtml).join('');
-      }
-      majorField = '<div class="select-wrap"><select id="sel-major" aria-label="Major or minor">' + inner + '</select></div>';
-    }
-    const home = deg.campusList.map(function (n) { return Object.keys(META.campuses).find(function (c) { return META.campuses[c] === n; }); }).filter(Boolean);
-    const others = PRIMARY_CAMPUSES.filter(function (c) { return home.indexOf(c) < 0; });
-    const campOpt = function (c) { return '<option value="' + c + '"' + (state.campus === c ? ' selected' : '') + '>' + c + ' · ' + esc(META.campuses[c]) + '</option>'; };
-    const campusSelect = '<div class="select-wrap"><select id="sel-campus" aria-label="Primary campus">' +
-      '<option value="">All campuses</option>' +
-      '<optgroup label="This degree\'s campuses">' + home.map(campOpt).join('') + '</optgroup>' +
-      '<optgroup label="Other campuses">' + others.map(campOpt).join('') + '</optgroup></select></div>';
-
-    const load = '<div class="segmented" role="group" aria-label="Enrolment load">' +
-      '<button type="button" data-action="load" data-load="FT" aria-pressed="' + (state.load === 'FT') + '" title="40 CP per session">Full-time</button>' +
-      '<button type="button" data-action="load" data-load="PT" aria-pressed="' + (state.load === 'PT') + '" title="20 CP per session (indicative)">Part-time</button></div>';
-    const track = '<label class="switch"><input type="checkbox" id="tg-track"' + (state.track ? ' checked' : '') + '><span class="track"></span>Track progress</label>';
-
-    $('#controls').innerHTML =
-      '<div class="controls-grid">' +
-      '<div class="field"><label for="sel-degree">Degree</label>' + degSelect + '</div>' +
-      '<div class="field">' + (deg.fixedStructure ? '<span class="field-label">Major / minor</span>' : '<label for="sel-major">Major / minor</label>') + majorField + '</div>' +
-      '</div><div class="controls-sub">' +
-      '<div class="field"><label for="sel-campus">Primary campus</label>' + campusSelect + '</div>' +
-      '<div class="field"><span class="field-label">Enrolment load</span>' + load + '</div>' +
-      '<div class="field"><span class="field-label">Checklist</span>' + track + '</div>' +
-      '</div>' +
-      '<div class="pathway-badge-row">' + pathwayBadge(ctx) + '</div>';
   }
 
   function groupDiff(ctx) {
@@ -455,14 +425,13 @@
     const keys = Array.from(new Set(Object.keys(a).concat(Object.keys(b)))).sort();
     return { other: other.groupLetter, diffs: keys.filter(function (k) { return a[k] !== b[k]; }) };
   }
-  function pathwayBadge(ctx) {
+  function pathwayWhy(ctx) {
     const o = ctx.opt;
     const deg = ctx.deg;
     if (!o.groupLetter) {
-      const why = deg.fixedStructure
+      return deg.fixedStructure
         ? '<b>Single recommended pathway.</b> ' + deg.code + ' has a fixed structure, so one WSLSA Autumn/Spring sequence covers every student.'
         : '<b>Single recommended pathway.</b> One Autumn/Spring sequence fits all ' + plural(deg.options.length, (o.majorKind === 'Minor' ? 'minor' : 'major')) + ' in ' + deg.code + ' against the published 2027 offerings; only the ' + (o.majorKind === 'Minor' ? 'minor' : 'major') + ' subjects change.';
-      return '<span class="pbadge pbadge-single">Single pathway</span><p class="pbadge-why">' + why + '</p>';
     }
     const kind = (o.majorKind || 'major').toLowerCase().replace('testamur ', '');
     const d = groupDiff(ctx);
@@ -473,119 +442,158 @@
         ? ' Compared with Pathway ' + d.other + ', the core law and non-law subjects move in ' + d.diffs.map(function (k) { return 'Y' + k; }).join(', ') + ' to make room for ' + kind + ' subjects in the sessions they run.'
         : ' Core law and non-law subjects sit in the same sessions as Pathway ' + d.other + '; only the ' + kind + ' and choice slots move.';
     }
-    return '<span class="pbadge pbadge-' + o.groupLetter + '">Pathway ' + o.groupLetter + '</span><p class="pbadge-why"><b>Why Pathway ' + o.groupLetter + '?</b> ' + deg.code + ' needs ' + deg.pathwayGroups + ' recommended pathways so every ' + kind + ' fits the published Autumn/Spring offerings. Pathway ' + o.groupLetter + ' is used for ' + shared + '.' + diffText + '</p>';
+    return '<b>Why Pathway ' + o.groupLetter + '?</b> ' + deg.code + ' needs ' + deg.pathwayGroups + ' recommended pathways so every ' + kind + ' fits the published Autumn/Spring offerings. Pathway ' + o.groupLetter + ' is used for ' + shared + '.' + diffText;
   }
 
   function renderHero(ctx) {
-    $('#hero-title').textContent = ctx.deg.title;
-    $('#hero-lede').textContent = META.explorerIntro.replace(' in the yellow box', '');
-    document.title = 'WSLSA 2027 · ' + ctx.deg.code + ' ' + ctx.deg.title;
+    const d = ctx.deg;
+    const o = ctx.opt;
+    $('#hero-title').innerHTML = titleHTML(d.title);
+    $('#hero-meta').innerHTML = '<span class="course" title="Course code">' + d.code + '</span>' +
+      '<span class="major">' + esc(selectionLabel(ctx)) + '</span>' +
+      '<span class="pbadge">' + (o.groupLetter ? 'Pathway ' + o.groupLetter : 'Single pathway') + '</span>' +
+      '<button type="button" class="why-btn" data-action="why" aria-expanded="' + !!ui.whyOpen + '" aria-controls="why-text">' + (ui.whyOpen ? 'Hide explanation ▴' : 'Why this pathway? ▾') + '</button>' +
+      '<p class="why-text" id="why-text"' + (ui.whyOpen ? '' : ' hidden') + '>' + pathwayWhy(ctx) + '</p>';
+    document.title = 'WSLSA 2027 · ' + d.code + ' ' + d.title;
+  }
+
+  function renderDock(ctx) {
+    const deg = ctx.deg;
+    const single = DEGREES.filter(function (d) { return d.code === '2848'; });
+    const dbl = DEGREES.filter(function (d) { return d.code !== '2848'; });
+    function degOpt(d) { return '<option value="' + d.code + '"' + (d.code === deg.code ? ' selected' : '') + '>' + esc(d.label) + '</option>'; }
+    const degSelect = '<div class="select-wrap"><select id="sel-degree" aria-label="Degree">' +
+      '<optgroup label="Single degree">' + single.map(degOpt).join('') + '</optgroup>' +
+      '<optgroup label="Double degrees">' + dbl.map(degOpt).join('') + '</optgroup></select></div>';
+
+    let majorField;
+    if (deg.fixedStructure) {
+      const built = builtInMajor(deg);
+      majorField = '<div class="locked" id="major-locked">' + LOCK_ICON + '<span><b>Fixed structure.</b> ' + (built ? 'Built-in: ' + esc(built) : 'No major or minor to choose') + '</span></div>';
+    } else {
+      const opts = deg.options.map(function (k) { return OPT[k]; });
+      const letters = Array.from(new Set(opts.map(function (o) { return o.groupLetter; })));
+      const optHtml = function (o) { return '<option value="' + esc(o.pathwayKey) + '"' + (o.pathwayKey === ctx.key ? ' selected' : '') + '>' + esc(o.majorLabel) + '</option>'; };
+      const inner = letters.length > 1
+        ? letters.map(function (L) { return '<optgroup label="Pathway ' + L + '">' + opts.filter(function (o) { return o.groupLetter === L; }).map(optHtml).join('') + '</optgroup>'; }).join('')
+        : opts.map(optHtml).join('');
+      majorField = '<div class="select-wrap"><select id="sel-major" aria-label="Major or minor">' + inner + '</select></div>';
+    }
+    const home = deg.campusList.map(function (n) { return Object.keys(META.campuses).find(function (c) { return META.campuses[c] === n; }); }).filter(Boolean);
+    const others = PRIMARY_CAMPUSES.filter(function (c) { return home.indexOf(c) < 0; });
+    const campOpt = function (c) { return '<option value="' + c + '"' + (state.campus === c ? ' selected' : '') + '>' + c + ' · ' + esc(META.campuses[c]) + '</option>'; };
+    const campusSelect = '<div class="select-wrap"><select id="sel-campus" aria-label="Highlight a campus">' +
+      '<option value="">All campuses</option>' +
+      '<optgroup label="This degree\'s campuses">' + home.map(campOpt).join('') + '</optgroup>' +
+      '<optgroup label="Other campuses">' + others.map(campOpt).join('') + '</optgroup></select></div>';
+    const load = '<div class="segmented" role="group" aria-label="Enrolment load">' +
+      '<button type="button" data-action="load" data-load="FT" aria-pressed="' + (state.load === 'FT') + '" title="40 CP per session">Full-time</button>' +
+      '<button type="button" data-action="load" data-load="PT" aria-pressed="' + (state.load === 'PT') + '" title="20 CP per session (indicative)">Part-time</button></div>';
+
+    const total = deg.cp;
+    const done = ctx.doneCP;
+    const remaining = Math.max(total - done, 0);
+    const per = LOAD_CP[state.load];
+    const pct = total ? Math.min(100, Math.round(done / total * 100)) : 0;
+    const progress = '<div class="progress"><div class="progress-top"><span class="field-label">Progress</span>' +
+      '<span class="progress-num" id="progress-num">' + done + ' / ' + total + ' <small>CP</small></span></div>' +
+      '<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="' + total + '" aria-valuenow="' + done + '" aria-label="Credit points completed"><span style="width:' + pct + '%"></span></div>' +
+      '<div class="progress-meta">' + (remaining ? remaining + ' CP to go · ≈ ' + plural(Math.ceil(remaining / per), 'session') + ' ' + (state.load === 'FT' ? 'FT' : 'PT') : 'All ' + total + ' CP complete') + '</div></div>';
+
+    $('#dock').innerHTML =
+      '<div class="field"><label for="sel-degree">Degree</label>' + degSelect + '</div>' +
+      '<div class="field">' + (deg.fixedStructure ? '<span class="field-label">Major / minor</span>' : '<label for="sel-major">Major / minor</label>') + majorField + '</div>' +
+      '<div class="field"><label for="sel-campus">Campus highlight</label>' + campusSelect + '</div>' +
+      '<div class="field"><span class="field-label">Load</span>' + load + '</div>' + progress;
   }
 
   function renderFacts(ctx) {
     const d = ctx.deg;
-    const okCP = ctx.totalCP === d.cp;
+    const item = function (label, value, cls) { return '<div><span class="rb-l">' + label + '</span><span class="rb-v' + (cls ? ' ' + cls : '') + '">' + value + '</span></div>'; };
     $('#facts').innerHTML =
-      '<dl class="fact"><dt>Credit points</dt><dd class="fact-big">' + d.cp + ' CP</dd><dd><small>' + (okCP ? 'Pathway sums to ' + ctx.totalCP + ' ✓' : 'Pathway sums to ' + ctx.totalCP + ' CP') + '</small></dd></dl>' +
-      '<dl class="fact"><dt>Duration</dt><dd>' + fmt(d.ftYears) + ' years full-time<small>' + fmt(d.ptYears) + ' years part-time</small></dd></dl>' +
-      '<dl class="fact"><dt>Intake</dt><dd>' + esc(d.intake) + (d.intakeList.length === 1 ? '<small>' + esc(d.intakeList[0]) + ' entry only</small>' : '') + '</dd></dl>' +
-      '<dl class="fact"><dt>Campuses</dt><dd>' + esc(d.campuses) + '</dd></dl>' +
-      '<dl class="fact"><dt>Students</dt><dd>' + esc(d.students) + '</dd></dl>' +
-      '<dl class="fact"><dt>CRICOS</dt><dd>' + (d.cricos ? esc(d.cricos) : '<span class="muted">Not listed</span>') + '</dd></dl>' +
-      '<div class="fact-qr">' + (d.qrSvg ? '<div class="qr-box" aria-hidden="true">' + d.qrSvg + '</div>' : '') +
-      '<div><span class="small muted" style="display:block;font-weight:600;letter-spacing:.07em;text-transform:uppercase;font-size:11.5px">2027 Handbook</span><a href="' + esc(d.handbook) + '" target="_blank" rel="noopener">Course ' + d.code + ' ↗</a></div></div>';
+      item('Credit points', d.cp + ' CP', 'big') +
+      item('Duration', fmt(d.ftYears) + ' yrs full-time <small>· ' + fmt(d.ptYears) + ' part-time</small>') +
+      item('Intake', esc(d.intake) + (d.intakeList.length === 1 ? ' <small>only</small>' : '')) +
+      item('Campuses', esc(d.campuses)) +
+      '<div><a class="tbtn tbtn-outline handbook" href="' + esc(d.handbook) + '" target="_blank" rel="noopener">Official 2027 Handbook →</a></div>';
   }
 
-  function renderProgress(ctx) {
-    const el = $('#progress');
-    if (!state.track) { el.innerHTML = ''; return; }
-    const total = ctx.deg.cp;
-    const done = ctx.doneCP;
-    const remaining = Math.max(total - done, 0);
-    const per = LOAD_CP[state.load];
-    const sessions = Math.ceil(remaining / per);
-    const pct = total ? Math.min(100, Math.round(done / total * 100)) : 0;
-    el.innerHTML = '<div class="card progress-card">' +
-      '<div class="progress-num" id="progress-num">' + done + ' / ' + total + ' <small>CP completed</small></div>' +
-      '<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="' + total + '" aria-valuenow="' + done + '" aria-label="Credit points completed"><span style="width:' + pct + '%"></span></div>' +
-      '<div class="progress-meta"><b>' + remaining + ' CP</b> remaining' + (remaining ? ' ≈ <b>' + plural(sessions, 'session') + '</b> at ' + (state.load === 'FT' ? 'full-time' : 'part-time') + ' load (' + per + ' CP/session)' : ': all done') + '</div></div>';
-  }
-
-  function renderRisks(ctx) {
+  function renderAdvisory(ctx) {
     const r = ctx.risks;
-    const chips = [];
-    chips.push(r.advisor.length
-      ? '<a href="#risk-advisor" class="risk-chip rc-advisor"><span class="dot"></span>' + plural(r.advisor.length, 'advisor prerequisite gap') + '</a>'
-      : '<span class="risk-chip rc-ok"><span class="dot"></span>No advisor prerequisite gaps flagged</span>');
-    if (r.tbc.length) chips.push('<a href="#risk-tbc" class="risk-chip rc-tbc"><span class="dot"></span>' + plural(r.tbc.length, 'subject') + ' with session TBC</a>');
-    if (r.pending.length) chips.push('<button type="button" class="risk-chip rc-pending" data-action="jump" data-slot="' + r.pending[0].id + '"><span class="dot"></span>' + plural(r.pending.length, 'choice slot') + ' still open</button>');
-    else chips.push('<span class="risk-chip rc-ok"><span class="dot"></span>All choices made</span>');
-    if (state.campus) chips.push('<span class="risk-chip rc-campus"><span class="dot"></span>' + (r.campus.length ? plural(r.campus.length, 'subject') + ' not at ' + esc(META.campuses[state.campus]) + ' or online' : 'Everything runs at ' + esc(META.campuses[state.campus]) + ' or online') + '</span>');
-    if (r.y2026.length) chips.push('<span class="risk-chip rc-2026"><span class="dot"></span>' + plural(r.y2026.length, 'subject') + ' using 2026 session data</span>');
+    const sev = r.advisor.length ? 'adv-crit' : (r.tbc.length || r.campus.length || r.notOffered.length) ? 'adv-warn' : 'adv-ok';
+    const parts = [];
+    if (r.advisor.length) parts.push('<b>' + plural(r.advisor.length, 'prerequisite note') + '</b>');
+    if (r.tbc.length) parts.push('<b>' + r.tbc.length + '</b> ' + (r.tbc.length === 1 ? 'subject has' : 'subjects have') + ' 2027 sessions TBC');
+    if (r.pending.length) parts.push('<b>' + r.pending.length + '</b> ' + (r.pending.length === 1 ? 'choice' : 'choices') + ' still open');
+    if (state.campus && r.campus.length) parts.push('<b>' + r.campus.length + '</b> not at ' + esc(META.campuses[state.campus]) + ' or online');
+    if (r.y2026.length) parts.push(r.y2026.length + ' using 2026 session data');
+    if (!parts.length) parts.push('Nothing flagged for this selection');
 
-    let html = '<div class="risk-summary">' + chips.join('') + '</div>';
-
-    if (r.advisor.length) {
-      html += '<div class="alert alert-advisor" id="risk-advisor"><h3>⚠ Advisor prerequisite gaps</h3><ul>' + r.advisor.map(function (a) {
-        const scope = a.applies
-          ? '<span class="note-scope">' + (a.note.major ? 'Applies to your ' + esc(a.note.majorKind.replace('Testamur ', '').toLowerCase()) : 'Applies to this degree') + '</span>'
-          : '<span class="note-scope related">Flagged for the ' + esc(a.note.major) + ' ' + esc(a.note.majorKind.replace('Testamur ', '').toLowerCase()) + '; ' + esc(a.note.subject) + ' is also in your pathway</span>';
-        return '<li>' + scope + '<br>' + (a.flagSlot ? '<button type="button" class="where" data-action="jump" data-slot="' + a.flagSlot.id + '">' + where(a.flagSlot) + '</button>' : '<span class="where">Not in your plan</span>') +
-          esc(a.note.text) + (a.hint ? '<span class="hint">' + (a.resolvedByChoice ? '<b>Your choice helps:</b> ' : '<b>From your plan:</b> ') + esc(a.hint) + '</span>' : '') + '</li>';
-      }).join('') + '</ul></div>';
-    }
+    const secs = [];
+    secs.push('<section class="adv-sec" id="risk-advisor"><h3><span class="idx">01→</span>Prerequisite notes</h3>' + (r.advisor.length ? '<ul>' + r.advisor.map(function (a) {
+      const scope = a.applies
+        ? '<span class="note-scope">' + (a.note.major ? 'Applies to your ' + esc(a.note.majorKind.replace('Testamur ', '').toLowerCase()) : 'Applies to this degree') + '</span>'
+        : '<span class="note-scope related">Flagged for the ' + esc(a.note.major) + ' ' + esc(a.note.majorKind.replace('Testamur ', '').toLowerCase()) + '; ' + esc(a.note.subject) + ' is also in your pathway</span>';
+      return '<li>' + scope + (a.flagSlot ? '<button type="button" class="where" data-action="jump" data-slot="' + a.flagSlot.id + '">' + where(a.flagSlot) + '</button>' : '<span class="where">Not in your plan</span>') +
+        esc(a.note.text) + (a.hint ? '<span class="hint">' + (a.resolvedByChoice ? '<b>Your choice helps:</b> ' : '<b>From your plan:</b> ') + esc(a.hint) + '</span>' : '') + '</li>';
+    }).join('') + '</ul>' : '<p>The workbook flags no prerequisite gaps for this selection.</p>') + '</section>');
     if (r.tbc.length) {
-      html += '<div class="alert alert-tbc" id="risk-tbc"><h3>⏳ 2027 session not yet published (TBC)</h3>' +
-        '<p>WSLSA placed these subjects in the session shown, but WSU has not published their 2027 offering yet. Check the <a href="' + esc(ctx.deg.handbook) + '" target="_blank" rel="noopener">2027 Handbook</a> again closer to enrolment.</p>' +
-        '<div class="tbc-list">' + r.tbc.map(function (s) {
-          return '<button type="button" class="tbc-item" data-action="jump" data-slot="' + s.id + '"><code>' + esc(s.code) + '</code>' + esc(s.title) + ' <span>' + where(s) + (s.chosen ? ' · your choice' : '') + '</span></button>';
-        }).join('') + '</div></div>';
+      secs.push('<section class="adv-sec" id="risk-tbc"><h3><span class="idx">02→</span>2027 sessions TBC</h3>' +
+        '<p>WSLSA placed these subjects in the session shown, but WSU has not published their 2027 offering yet. Check the <a href="' + esc(ctx.deg.handbook) + '" target="_blank" rel="noopener">2027 Handbook →</a> closer to enrolment.</p>' +
+        '<div class="chiplist">' + r.tbc.map(function (s) {
+          return '<button type="button" class="chipbtn" data-action="jump" data-slot="' + s.id + '"><code>' + esc(s.code) + '</code>' + esc(s.title) + ' <span>' + where(s) + (s.chosen ? ' · your choice' : '') + '</span></button>';
+        }).join('') + '</div></section>');
     }
-    const extra = [];
-    if (state.campus && (r.campus.length || r.onlineOnly.length)) {
-      extra.push('<div><h4>Campus check: ' + esc(META.campuses[state.campus]) + '</h4>' +
-        (r.campus.length ? '<p>Not offered at your campus or online in the planned session: ' + r.campus.map(function (s) { return '<button type="button" class="linkish" data-action="jump" data-slot="' + s.id + '">' + esc(s.code) + '</button> (' + s.offer.codes.join(' ') + ', ' + where(s) + ')'; }).join('; ') + '.</p>' : '') +
-        (r.onlineOnly.length ? '<p>Available to you online only: ' + r.onlineOnly.map(function (s) { return esc(s.code); }).join(', ') + '.</p>' : '') + '</div>');
-    }
-    if (r.y2026.length) {
-      extra.push('<div><h4>2026 session data shown</h4><p>The 2027 session is not yet published for ' + r.y2026.map(function (s) { return esc(s.code) + ' ' + esc(s.title) + ' (' + where(s) + ')'; }).join('; ') + '. The campuses shown are from 2026.</p></div>');
-    }
-    if (r.notOffered.length) {
-      extra.push('<div><h4>Not offered in the planned session</h4><p>' + r.notOffered.map(function (s) { return esc(s.code) + ' (' + where(s) + ')'; }).join('; ') + '. The catalogue lists no ' + 'campus for that session.</p></div>');
-    }
-    if (r.pending.length) {
-      extra.push('<div><h4>Open choices</h4><p>' + r.pending.map(function (s) { return '<button type="button" class="linkish" data-action="jump" data-slot="' + s.id + '">' + where(s) + '</button>'; }).join(', ') + '.</p></div>');
-    }
-    if (extra.length) html += '<details class="more"><summary>More checks for this plan</summary><div class="more-body">' + extra.join('') + '</div></details>';
-    $('#risks').innerHTML = html;
+    const checks = [];
+    if (state.campus && r.campus.length) checks.push('<p><b>Not at ' + esc(META.campuses[state.campus]) + ' or online:</b> ' + r.campus.map(function (s) { return '<button type="button" class="linkish" data-action="jump" data-slot="' + s.id + '">' + esc(s.code) + '</button> (' + s.offer.codes.join(' ') + ', ' + where(s) + ')'; }).join('; ') + '.</p>');
+    if (state.campus && r.onlineOnly.length) checks.push('<p><b>Online only for you:</b> ' + r.onlineOnly.map(function (s) { return esc(s.code); }).join(', ') + '.</p>');
+    if (r.y2026.length) checks.push('<p><b>2026 session data shown:</b> ' + r.y2026.map(function (s) { return esc(s.code) + ' ' + esc(s.title) + ' (' + where(s) + ')'; }).join('; ') + '.</p>');
+    if (r.notOffered.length) checks.push('<p><b>Not offered in the planned session:</b> ' + r.notOffered.map(function (s) { return esc(s.code) + ' (' + where(s) + ')'; }).join('; ') + '.</p>');
+    if (r.pending.length) checks.push('<p><b>Still to choose:</b> ' + r.pending.map(function (s) { return '<button type="button" class="linkish" data-action="jump" data-slot="' + s.id + '">' + where(s) + '</button>'; }).join(', ') + '.</p>');
+    if (checks.length) secs.push('<section class="adv-sec"><h3><span class="idx">' + (r.tbc.length ? '03' : '02') + '→</span>Campus &amp; choice checks</h3>' + checks.join('') + '</section>');
+
+    $('#advisory').innerHTML = '<details class="advisory ' + sev + '" id="advisory-box"' + (ui.advisoryOpen ? ' open' : '') + '>' +
+      '<summary>' + ALERT_ICON + '<span class="adv-label">Pathway Advisory</span><span class="adv-counts">' + parts.join(' · ') + '</span><span class="adv-cta">View details</span></summary>' +
+      '<div class="adv-body">' + secs.join('') + '</div></details>';
   }
 
   function renderLegend() {
-    const types = ['law', 'nonlaw', 'major', 'llb', 'choice', 'elective'];
+    const types = [['law', 'Law core', '--crimson'], ['nonlaw', 'Non-law core', '--slate'], ['major', 'Major / minor', '--teal']];
     $('#legend').innerHTML =
-      '<div class="legend-group"><span class="legend-title">Unit type</span>' + types.map(function (t) {
-        return '<span class="swatch"><i style="background:var(--t-' + t + '-bg);border-color:var(--t-' + t + ')"></i>' + TYPE_LABEL[t] + '</span>';
-      }).join('') + '</div>' +
-      '<div class="legend-group"><span class="legend-title">Campus</span>' + Object.keys(META.campuses).map(function (c) { return pill(c, { focus: true }); }).join('') + pill('TBC', { focus: true }) +
-      (state.campus ? ' <button type="button" class="linkish small" data-action="campus-clear">Clear campus filter</button>' : '') + '</div>';
+      '<div class="lg-group"><span class="lg-title">Unit type</span>' + types.map(function (t) {
+        return '<span class="lg-sw"><i style="--k:var(' + t[2] + ')"></i>' + t[1] + '</span>';
+      }).join('') + '<span class="lg-sw slot"><i></i>Your choice (LLB Alternate, choice, elective)</span></div>' +
+      '<span class="lg-sep" aria-hidden="true"></span>' +
+      '<div class="lg-group"><span class="lg-title">Campus</span>' + Object.keys(META.campuses).map(function (c) {
+        return '<span class="lg-camp">' + pill(c, { focus: true }) + esc(META.campuses[c].replace(' (Kingswood)', '')) + '</span>';
+      }).join('') + '<span class="lg-camp">' + pill('TBC', { focus: true }) + 'Not yet published</span>' +
+      (state.campus ? '<button type="button" class="linkish small" data-action="campus-clear">Clear highlight</button>' : '') + '</div>';
   }
 
+  function selectLabel(s) {
+    if (s.kind === 'llb') return 'Select LLB Alternate';
+    if (s.kind === 'elective') return 'Select Elective';
+    return 'Select Subject';
+  }
   function slotHTML(s, ctx) {
-    const cls = ['slot', 't-' + s.group];
-    if (s.pending) cls.push('pending');
+    const kc = kindClass(s);
+    const cls = ['subj', kc];
+    if (kc === 'k-slot') cls.push(s.pending ? 'is-pending' : 'is-chosen');
     if (s.done) cls.push('is-done');
     const offCampus = state.campus && ctx.risks.campus.indexOf(s) >= 0;
     if (offCampus) cls.push('offcampus');
     const flags = [];
-    if (s.offer && s.offer.tbc) flags.push('<span class="flag flag-tbc" title="2027 session not yet published">TBC</span>');
+    if (s.done) flags.push('<span class="flag flag-done">✓ Completed</span>');
+    if (s.offer && s.offer.tbc) flags.push('<span class="flag flag-tbc" title="2027 session not yet published">Session TBC</span>');
     if (s.offer && s.offer.y2026 && !s.offer.tbc) flags.push('<span class="flag flag-2026" title="2027 session not yet published; 2026 session shown">2026 data</span>');
     if (s.chosen) flags.push('<span class="flag flag-chosen">Your choice</span>');
     if (s.custom) flags.push('<span class="flag flag-chosen">Custom</span>');
     if (offCampus) flags.push('<span class="flag flag-campus">Not at ' + state.campus + '</span>');
-    if (ctx.risks.advisor.some(function (a) { return a.flagSlot === s; })) flags.push('<a class="flag flag-warn" href="#risk-advisor">Check prerequisite</a>');
+    if (ctx.risks.advisor.some(function (a) { return a.flagSlot === s; })) flags.push('<button type="button" class="flag flag-warn" data-action="open-advisory">Check prerequisite</button>');
     if (s.offer && s.offer.none && !s.pending) flags.push('<span class="flag flag-warn">Not offered this session</span>');
 
     let body = '';
+    if (s.pending && s.kind === 'llb') body += '<div class="subj-note">Any LLB Alternate offered in ' + s.session + ' 2027.</div>';
     if (s.kind === 'inline' && s.raw.options.length > 1) {
       body += '<div class="inline-opts" role="group" aria-label="Choose one">' + s.raw.options.map(function (o) {
         const sel = s.code === o.code && !s.pending;
@@ -595,49 +603,53 @@
         return '<button type="button" class="inline-opt" data-action="inline" data-slot="' + s.id + '" data-code="' + esc(o.code) + '" aria-pressed="' + sel + '"' + (clash ? ' disabled' : '') + ' title="' + esc(tip) + '">' +
           '<span class="io-code">' + esc(o.code) + (o.tbcFlag ? ' · TBC' : '') + '</span><span class="io-title">' + esc(o.title) + '</span></button>';
       }).join('') + '</div>';
+      if (s.chosen) body += '<div class="subj-actions"><button type="button" class="text-btn" data-action="clear" data-slot="' + s.id + '">Clear choice</button></div>';
     } else if (s.kind === 'inline' && s.auto) {
-      body += '<div class="slot-note">Only option listed for this ' + s.session + ' slot.</div>';
+      body += '<div class="subj-note">Only option listed for this ' + s.session + ' slot.</div>';
     }
-    if (s.kind === 'llb' || s.kind === 'pool' || s.kind === 'option' || s.kind === 'elective') {
-      const label = s.kind === 'llb' ? (s.pending ? 'Choose LLB Alternate' : 'Change')
-        : s.kind === 'elective' ? (s.pending ? 'Choose elective' : 'Change')
-        : s.kind === 'option' ? 'Swap option'
-        : (s.pending ? 'Choose subject' : 'Change');
-      body += '<div class="slot-actions"><button type="button" class="slot-btn" data-action="picker-open" data-slot="' + s.id + '">' + label + (s.kind === 'llb' || s.kind === 'pool' ? ' · ' + s.session : '') + '</button>' +
-        ((s.pick && !s.pending) ? '<button type="button" class="slot-btn subtle" data-action="clear" data-slot="' + s.id + '">' + (s.kind === 'option' ? 'Reset to WSLSA pick' : 'Clear') + '</button>' : '') + '</div>';
-    } else if (s.kind === 'inline' && s.chosen) {
-      body += '<div class="slot-actions"><button type="button" class="slot-btn subtle" data-action="clear" data-slot="' + s.id + '">Clear choice</button></div>';
+    if (s.kind === 'llb' || s.kind === 'pool' || s.kind === 'elective') {
+      body += s.pending
+        ? '<div class="subj-actions"><button type="button" class="select-btn" data-action="picker-open" data-slot="' + s.id + '">+ ' + selectLabel(s) + ' →</button></div>'
+        : '<div class="subj-actions"><button type="button" class="text-btn strong" data-action="picker-open" data-slot="' + s.id + '">Change subject →</button><button type="button" class="text-btn" data-action="clear" data-slot="' + s.id + '">Clear</button></div>';
+    } else if (s.kind === 'option') {
+      body += '<div class="subj-actions"><button type="button" class="text-btn strong" data-action="picker-open" data-slot="' + s.id + '">Swap option →</button>' +
+        (s.pick ? '<button type="button" class="text-btn" data-action="clear" data-slot="' + s.id + '">Reset to WSLSA pick</button>' : '') + '</div>';
     }
-    if (s.kind === 'fixed' && s.cp === 0) body += '<div class="slot-note">0 CP placement/requirement</div>';
+    if (s.kind === 'fixed' && s.cp === 0) body += '<div class="subj-note">0 CP placement or requirement</div>';
 
-    const check = state.track ? '<input type="checkbox" data-action="done" data-slot="' + s.id + '"' + (s.done ? ' checked' : '') + ' aria-label="Mark ' + esc((s.code || '') + ' ' + (s.title || '')) + ' complete">' : '';
+    const codeTxt = s.pending ? (s.kind === 'llb' ? 'LLB ALT' : s.kind === 'elective' ? 'ELECTIVE' : 'CHOICE') : s.code;
+    const check = '<label class="tick" title="Mark complete"><input type="checkbox" data-action="done" data-slot="' + s.id + '"' + (s.done ? ' checked' : '') + ' aria-label="Mark ' + esc((s.pending ? '' : s.code + ' ') + s.title) + ' complete"><span class="tick-box" aria-hidden="true"></span></label>';
     return '<div class="' + cls.join(' ') + '" id="slot-' + s.id + '" data-slot="' + s.id + '">' +
-      '<div class="slot-check">' + check + '</div>' +
-      '<div class="slot-main"><div class="slot-top"><span class="code">' + esc(s.pending ? (s.kind === 'llb' ? 'LLB ALT' : s.kind === 'elective' ? 'ELECTIVE' : 'CHOICE') : s.code) + '</span><span class="type-tag">' + esc(s.typeLabel) + '</span>' + flags.join('') + '</div>' +
-      '<div class="slot-title">' + esc(s.title) + '</div>' + body + '</div>' +
-      '<div class="slot-side"><div class="pills">' + (s.pending ? '' : pillsFor(s.offer)) + '</div><span class="slot-cp">' + s.cp + ' CP</span></div></div>';
+      '<div class="subj-lead">' + check + '<span class="code-pill">' + esc(codeTxt) + '</span></div>' +
+      '<div class="subj-main"><div class="subj-title">' + esc(s.title) + '</div><div class="subj-meta"><span class="cat">' + esc(s.typeLabel) + '</span>' + flags.join('') + '</div>' + body + '</div>' +
+      '<div class="subj-side"><span class="pills">' + (s.pending ? '' : pillsFor(s.offer)) + '</span><span class="cp-badge">' + s.cp + ' CP</span></div></div>';
   }
+
+  function sortSlots(list) {
+    return list.slice().sort(function (a, b) { return orderIdx(a.year, a.session) - orderIdx(b.year, b.session) || a.raw.slot - b.raw.slot; });
+  }
+  function sumCP(list, doneOnly) { return list.reduce(function (a, s) { return a + (!doneOnly || s.done ? s.cp : 0); }, 0); }
 
   function renderGrid(ctx) {
     const years = timeline(ctx, state.load);
-    let html = '';
-    if (state.load === 'PT') {
-      html += '<p class="pt-note"><b>Part-time view (indicative).</b> Each full-time session is split into two 20 CP sessions, keeping every subject in the session type it is offered in. This lengthens the pathway to about ' + fmt(ctx.deg.ptYears) + ' years and can shift prerequisite timing, so confirm your sequence with the Academic Program Advisor.</p>';
-    }
+    const pt = state.load === 'PT';
+    let html = pt ? '<p class="pt-note"><b>Part-time view (indicative).</b> Each full-time session is split into two 20 CP sessions, keeping every subject in the session type it is offered in. This lengthens the pathway to about ' + fmt(ctx.deg.ptYears) + ' years and can shift prerequisite timing, so confirm your sequence with the Academic Program Advisor.</p>' : '';
     years.forEach(function (y) {
-      const all = y.Autumn.concat(y.Spring);
-      const ycp = all.reduce(function (a, s) { return a + s.cp; }, 0);
-      const ydone = all.reduce(function (a, s) { return a + (s.done ? s.cp : 0); }, 0);
-      html += '<article class="year" aria-label="Year ' + y.year + '"><header class="year-head"><h2>Year ' + y.year + (state.load === 'PT' ? ' <span class="muted small">(part-time)</span>' : '') + '</h2>' +
-        '<span class="meta">' + (state.track ? ydone + ' / ' : '') + ycp + ' CP</span></header><div class="sessions">';
+      const lists = { Autumn: sortSlots(y.Autumn), Spring: sortSlots(y.Spring) };
+      const all = lists.Autumn.concat(lists.Spring);
+      const R = roman(y.year);
+      html += '<article class="year" id="year-' + y.year + '" aria-label="Year ' + y.year + '">' +
+        '<header class="year-bar" data-roman="' + R + '"><span class="year-seal" aria-hidden="true">' + R + '</span>' +
+        '<h2>Year ' + y.year + (pt ? '<small>Part-time</small>' : '') + '</h2>' +
+        '<div class="year-cp"><b>' + sumCP(lists.Autumn) + ' CP</b> Autumn · <b>' + sumCP(lists.Spring) + ' CP</b> Spring<span class="done">' + sumCP(all, true) + ' / ' + sumCP(all) + ' CP completed</span></div></header>' +
+        '<div class="sessions">';
       SESSIONS.forEach(function (sess) {
-        const list = y[sess].slice().sort(function (a, b) { return orderIdx(a.year, a.session) - orderIdx(b.year, b.session) || a.raw.slot - b.raw.slot; });
-        const cp = list.reduce(function (a, s) { return a + s.cp; }, 0);
+        const list = lists[sess];
         const allDone = list.length && list.every(function (s) { return s.done; });
-        html += '<section class="session" aria-label="' + sess + '"><div class="session-head"><h3>' + sess + '</h3><div class="session-actions">' +
-          (state.track && list.length ? '<button type="button" class="linkish small" data-action="session-done" data-ids="' + list.map(function (s) { return s.id; }).join(',') + '">' + (allDone ? 'Unmark all' : 'Mark all done') + '</button>' : '') +
-          '<span class="cp-total">' + cp + ' CP</span></div></div><div class="slots">' +
-          (list.length ? list.map(function (s) { return slotHTML(s, ctx); }).join('') : '<div class="slot-empty">No subjects scheduled</div>') + '</div></section>';
+        html += '<section class="session" aria-label="' + sess + ' session"><div class="session-head"><h3>' + sess + '<span>Session</span></h3><div class="session-tools">' +
+          (list.length ? '<button type="button" class="mark-all" data-action="session-done" data-ids="' + list.map(function (s) { return s.id; }).join(',') + '">' + (allDone ? 'Unmark all' : 'Mark all done') + '</button>' : '') +
+          '<span class="session-cp">' + sumCP(list) + ' CP</span></div></div><div class="slots">' +
+          (list.length ? list.map(function (s) { return slotHTML(s, ctx); }).join('') : '<div class="slot-empty">No subjects scheduled this session</div>') + '</div></section>';
       });
       html += '</div></article>';
     });
@@ -651,47 +663,51 @@
     return 'status-non';
   }
 
+  const TABS = [
+    ['structure', '01→', 'Program Structure & Credit Breakdown'],
+    ['admission', '02→', 'Admission, LPAB Accreditation & Exit Awards'],
+    ['catalogue', '03→', 'Full 2027 Subject & LLB Alternate Catalogue'],
+  ];
   function renderDetails(ctx) {
-    const tabs = [['structure', 'Structure & accreditation'], ['catalogue', 'Full subject catalogue'], ['sources', 'Data & sources']];
-    let html = '<div class="tabs" role="tablist">' + tabs.map(function (t) {
-      return '<button type="button" class="tab" role="tab" id="tab-' + t[0] + '" data-action="tab" data-tab="' + t[0] + '" aria-selected="' + (ui.tab === t[0]) + '">' + t[1] + '</button>';
-    }).join('') + '</div><div class="tab-panel" role="tabpanel">';
     const d = ctx.deg;
+    let html = '<div class="drawer-head"><p class="kicker">Degree details <i>·</i> 2027 Student Handbook</p><h2>Inside ' + titleHTML(d.title) + '</h2></div>' +
+      '<div class="tabs" role="tablist">' + TABS.map(function (t) {
+        return '<button type="button" class="tab" role="tab" id="tab-' + t[0] + '" data-action="tab" data-tab="' + t[0] + '" aria-selected="' + (ui.tab === t[0]) + '"><span class="idx">' + t[1] + '</span>' + esc(t[2]) + '</button>';
+      }).join('') + '</div><div class="tab-panel" role="tabpanel" aria-labelledby="tab-' + ui.tab + '">';
     if (ui.tab === 'structure') {
       const max = Math.max.apply(null, d.structure.map(function (c) { return c.cp; }));
-      html += '<div class="two-col"><div><h3 class="panel-h">Program structure</h3>' +
+      const c = META.counts;
+      html += '<div class="two-col"><div><h3 class="panel-h">Credit breakdown</h3>' +
         d.structure.map(function (c) {
           return '<div class="structure-row"><span>' + esc(c.component) + '</span><span class="cpv">' + c.cp + ' CP</span><span class="sbar"><span style="width:' + (c.cp / max * 100) + '%"></span></span></div>';
         }).join('') +
         '<div class="structure-row structure-total"><span>Total credit points</span><span class="cpv">' + d.structureTotal + ' CP</span></div>' +
-        '<dl class="kv" style="margin-top:18px"><dt>Assumed knowledge / admission</dt><dd>' + esc(d.assumedKnowledge) + '</dd></dl>' +
-        '<dl class="kv"><dt>Major / minor choices</dt><dd>' + esc(d.majorChoices) + ' · ' + plural(d.pathwayGroups, 'pathway group') + '</dd></dl></div>' +
-        '<div><h3 class="panel-h">External accreditation</h3><ul class="acc-list">' + d.accreditation.map(function (a) {
-          return '<li><span>' + esc(a.name) + '</span><span class="status ' + statusClass(a.status) + '">' + esc(a.status || '') + '</span></li>';
-        }).join('') + '</ul>' +
+        '<dl class="kv" style="margin-top:18px"><dt>Major / minor choices</dt><dd>' + esc(d.majorChoices) + ' · ' + plural(d.pathwayGroups, 'pathway group') + '</dd></dl>' +
+        '<dl class="kv"><dt>Duration</dt><dd>' + fmt(d.ftYears) + ' years full-time · ' + fmt(d.ptYears) + ' years part-time</dd></dl></div>' +
+        '<div><h3 class="panel-h">How the pathway is built</h3><p class="small muted" style="margin-top:0">' + esc(d.sheetIntro) + '</p>' +
+        '<h3 class="panel-h" style="margin-top:18px">Advisor notes for ' + d.code + '</h3>' +
+        (d.advisorNotes.length ? '<ul class="src-list">' + d.advisorNotes.map(function (n) { return '<li>' + esc(n.text) + '</li>'; }).join('') + '</ul>' : '<p class="muted small">The workbook lists no advisor notes for this degree.</p>') +
+        '<p class="small muted" style="margin-top:14px">Source: ' + esc(META.sourceWorkbook) + ' (' + c.pathwayRows.toLocaleString('en-AU') + ' pathway slots, ' + c.catalogueRows.toLocaleString('en-AU') + ' catalogue rows across ' + c.degrees + ' degrees). Subjects with sessions TBC in this degree: ' + esc(d.tbcSubjects.join(', ')) + '.</p></div></div>';
+    } else if (ui.tab === 'admission') {
+      html += '<div class="two-col"><div><h3 class="panel-h">Admission</h3>' +
+        '<dl class="kv"><dt>Assumed knowledge / admission</dt><dd>' + esc(d.assumedKnowledge) + '</dd></dl>' +
+        '<dl class="kv"><dt>Intake</dt><dd>' + esc(d.intake) + '</dd></dl>' +
+        '<dl class="kv"><dt>Campuses</dt><dd>' + esc(d.campuses) + '</dd></dl>' +
+        '<dl class="kv"><dt>Students</dt><dd>' + esc(d.students) + (d.cricos ? ' · CRICOS ' + esc(d.cricos) : '') + '</dd></dl>' +
         '<h3 class="panel-h" style="margin-top:20px">Exit awards</h3><ul class="exit-list">' + d.exitAwards.map(function (e) {
-          return '<li><span>' + (e.code ? '<b class="code" style="color:var(--slate)">' + e.code + '</b> ' : '') + esc(e.name) + '</span>' + (e.exitOnly ? '<span class="status status-non">Exit only</span>' : '') + '</li>';
+          return '<li><span>' + (e.code ? '<b class="mono">' + e.code + '</b> ' : '') + esc(e.name) + '</span>' + (e.exitOnly ? '<span class="status status-non">Exit only</span>' : '') + '</li>';
+        }).join('') + '</ul></div>' +
+        '<div><h3 class="panel-h">LPAB &amp; professional accreditation</h3><ul class="acc-list">' + d.accreditation.map(function (a) {
+          return '<li><span>' + esc(a.name) + '</span><span class="status ' + statusClass(a.status) + '">' + esc(a.status || '') + '</span></li>';
         }).join('') + '</ul></div></div>';
-    } else if (ui.tab === 'catalogue') {
+    } else {
       html += '<p class="cat-count">' + esc(d.catalogueNote || '') + '</p>' +
         '<div class="cat-filters">' +
         '<div class="field"><label for="cat-q">Search</label><input class="input" id="cat-q" type="search" placeholder="Code or title, e.g. LAWS 4008 or Revenue" value="' + esc(ui.cat.q) + '"></div>' +
         '<div class="field"><label for="cat-comp">Component</label><div class="select-wrap"><select id="cat-comp"><option value="">All components</option>' + d.components.map(function (c) { return '<option' + (ui.cat.comp === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select></div></div>' +
-        '<div class="field"><label for="cat-session">Session</label><div class="select-wrap"><select id="cat-session"><option value="">Any session</option><option value="Autumn"' + (ui.cat.session === 'Autumn' ? ' selected' : '') + '>Offered in Autumn</option><option value="Spring"' + (ui.cat.session === 'Spring' ? ' selected' : '') + '>Offered in Spring</option><option value="TBC"' + (ui.cat.session === 'TBC' ? ' selected' : '') + '>Session TBC</option></select></div></div>' +
-        '<div class="field"><span class="field-label">Campus</span><div class="locked" style="min-height:40px;border-style:solid">' + (state.campus ? 'Highlighting ' + esc(META.campuses[state.campus]) : 'Set a primary campus above to highlight') + '</div></div>' +
+        '<div class="field"><label for="cat-session">Session</label><div class="select-wrap"><select id="cat-session"><option value="">Autumn or Spring</option><option value="Autumn"' + (ui.cat.session === 'Autumn' ? ' selected' : '') + '>Offered in Autumn</option><option value="Spring"' + (ui.cat.session === 'Spring' ? ' selected' : '') + '>Offered in Spring</option><option value="TBC"' + (ui.cat.session === 'TBC' ? ' selected' : '') + '>Session TBC</option></select></div></div>' +
         '<label class="check-row" style="padding-bottom:10px"><input type="checkbox" id="cat-inplan"' + (ui.cat.inPlan ? ' checked' : '') + '>In my plan</label>' +
         '</div><div id="cat-results"></div>';
-    } else {
-      const c = META.counts;
-      html += '<div class="two-col"><div><h3 class="panel-h">How this guide is built</h3>' +
-        '<p>' + esc(d.sheetIntro) + '</p><p class="muted">' + esc(META.overviewNote) + '</p>' +
-        '<ul class="src-list"><li>Workbook: <b>' + esc(META.sourceWorkbook) + '</b> (extracted ' + esc(META.extractedOn) + ')</li>' +
-        '<li>' + c.degrees + ' degrees, ' + c.majorOptions + ' degree/major combinations, ' + c.pathways + ' pathways</li>' +
-        '<li>' + c.pathwayRows.toLocaleString('en-AU') + ' pathway slots and ' + c.catalogueRows.toLocaleString('en-AU') + ' catalogue rows</li>' +
-        '<li>Handbook: <a href="' + esc(d.handbook) + '" target="_blank" rel="noopener">' + esc(d.handbook) + '</a></li></ul></div>' +
-        '<div><h3 class="panel-h">All advisor notes for ' + d.code + '</h3>' +
-        (d.advisorNotes.length ? '<ul class="src-list">' + d.advisorNotes.map(function (n) { return '<li>' + esc(n.text) + '</li>'; }).join('') + '</ul>' : '<p class="muted">The workbook lists no advisor notes for this degree.</p>') +
-        '<h3 class="panel-h" style="margin-top:18px">Session TBC subjects (Overview)</h3><p>' + esc(d.tbcSubjects.join(', ')) + '</p></div></div>';
     }
     html += '</div>';
     $('#details').innerHTML = html;
@@ -713,7 +729,7 @@
     $('#cat-results').innerHTML = '<p class="cat-count">' + rows.length + ' of ' + d.catalogue.length + ' subjects</p><div class="table-scroll"><table class="cat"><thead><tr><th>Code</th><th>Title</th><th>Component</th><th>Level</th><th>Autumn</th><th>Spring</th><th>CP</th><th>Data source</th></tr></thead><tbody>' +
       rows.map(function (c) {
         const inPlan = !!ctx.used[c.code];
-        return '<tr class="' + (inPlan ? 'in-plan' : '') + '"><td class="c-code">' + esc(c.code) + '</td><td>' + esc(c.title) + (inPlan ? ' <span class="status status-major">In plan</span>' : '') + '</td><td class="c-comp">' + esc(c.component) + '</td><td class="small">' + esc(c.level) + '</td><td>' + cell(c.autumn) + '</td><td>' + cell(c.spring) + '</td><td class="small">' + c.cp + '</td><td class="small muted">' + esc(c.source) + '</td></tr>';
+        return '<tr class="' + (inPlan ? 'in-plan' : '') + '"><td class="c-code">' + esc(c.code) + '</td><td>' + esc(c.title) + (inPlan ? ' <span class="status status-major">In plan</span>' : '') + '</td><td class="c-comp">' + esc(c.component) + '</td><td class="small">' + esc(c.level) + '</td><td>' + cell(c.autumn) + '</td><td>' + cell(c.spring) + '</td><td class="small mono">' + c.cp + '</td><td class="small muted">' + esc(c.source) + '</td></tr>';
       }).join('') + '</tbody></table></div>';
   }
 
@@ -723,11 +739,20 @@
     const src = META.overviewNote.match(/^Source:[^]*?Degree Guides\./);
     return [sheet ? sheet[0] : '', ex ? ex[0] : '', src ? src[0] : '', 'Confirm enrolment decisions, prerequisites and any flagged gaps with the Academic Program Advisor.'].filter(Boolean).join(' ');
   }
+  const SCALES_PATH = '<path d="M50 22V74M38 78H62M26 32H74M26 32 18 52M26 32 34 52M74 32 66 52M74 32 82 52M15 52Q26 62 37 52ZM63 52Q74 62 85 52Z"/><circle cx="50" cy="19" r="3.2"/>';
+  const CREST_SVG = '<svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="49" fill="#8B0029"/><circle cx="50" cy="50" r="43.5" fill="none" stroke="#C59B27" stroke-width="2"/><g fill="none" stroke="#E3C774" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" transform="translate(19 21) scale(.62)">' + SCALES_PATH + '</g></svg>';
+  const SHIELD_SVG = function (cls) {
+    return '<svg class="' + cls + '" viewBox="0 0 240 280" aria-hidden="true"><path d="M120 10 226 40v88c0 68-46 116-106 142C60 244 14 196 14 128V40Z" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.05)" stroke-width="4"/><g fill="none" stroke="rgba(255,255,255,.06)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" transform="translate(52 62) scale(1.36)">' + SCALES_PATH + '</g></svg>';
+  };
+  const FOOT_LINE = '© 2026 Western Sydney Law Students\' Association Inc. <i>·</i> Building EK, Parramatta South Campus <i>·</i> By students, for students';
 
-  function renderFoot() {
-    $('#site-foot').innerHTML = '<p><b>Your plan stays on this device.</b> Choices and progress are saved in this browser only and are never uploaded. To continue on another phone or computer, use Copy plan link and open that link there.</p>' +
-      '<p><b>WSLSA disclaimer.</b> ' + esc(disclaimerText()) + '</p>' +
-      '<p>' + esc(META.legend.replace(/^Legend:\s*/, '').replace('tinted rows are law subjects. ', '')) + '</p>';
+  function renderFoot(ctx) {
+    $('#site-foot').innerHTML = SHIELD_SVG('foot-watermark') + '<div class="foot-inner">' +
+      '<div class="foot-brand"><span class="crest-mark">' + CREST_SVG + '</span><div><p class="foot-sub">Western Sydney</p><p class="foot-name">Law Students\' Association</p><p class="foot-tag">Est. 1996 · By students, for students</p></div></div>' +
+      '<div class="foot-col"><h4>Your plan</h4><p>Choices and progress are saved in this browser only and are never uploaded. To continue on another phone or computer, use Copy Share Link and open that link there.</p>' +
+      '<div class="foot-links"><a href="' + esc(ctx.deg.handbook) + '" target="_blank" rel="noopener">Official 2027 Handbook →</a><a href="https://wslsa.com.au/" target="_blank" rel="noopener">wslsa.com.au →</a></div></div>' +
+      '<div class="foot-col"><h4>Official handbook disclaimer</h4><p>' + esc(disclaimerText()) + '</p></div>' +
+      '</div><div class="foot-base">' + FOOT_LINE + '</div>';
   }
 
   // ======================================================================== render: main
@@ -738,15 +763,14 @@
     lastCtx = ctx;
     document.body.classList.toggle('has-campus', !!state.campus);
     renderHero(ctx);
-    renderControls(ctx);
+    renderDock(ctx);
     renderFacts(ctx);
-    renderProgress(ctx);
-    renderRisks(ctx);
+    renderAdvisory(ctx);
     renderLegend();
     renderGrid(ctx);
     renderDetails(ctx);
-    renderFoot();
-    if (active && document.getElementById(active) && /^(sel-|tg-|cat-)/.test(active)) document.getElementById(active).focus({ preventScroll: true });
+    renderFoot(ctx);
+    if (active && document.getElementById(active) && /^(sel-|cat-)/.test(active)) document.getElementById(active).focus({ preventScroll: true });
     saveState();
     syncHash();
     if (ui.modal === 'export') renderExportPreview();
@@ -913,40 +937,37 @@
     const d = ctx.deg;
     const o = ctx.opt;
     const badge = o.groupLetter ? 'Pathway ' + o.groupLetter : 'Single recommended pathway';
-    const sel = o.majorCode === 'BASE' ? 'No major or minor (fixed structure)' : esc(o.majorLabel);
     const facts = [
       ['Credit points', d.cp + ' CP'],
-      ['Duration', fmt(d.ftYears) + ' yrs FT / ' + fmt(d.ptYears) + ' yrs PT'],
+      ['Duration', fmt(d.ftYears) + ' yrs FT · ' + fmt(d.ptYears) + ' yrs PT'],
       ['Intake', esc(d.intake)],
       ['Campuses', esc(d.campuses)],
       ['Students', esc(d.students)],
       ['CRICOS', d.cricos ? esc(d.cricos) : 'Not listed'],
     ];
-    return '<header class="pd-head"><div class="pd-head-grid"><div>' +
-      '<div class="pd-eyebrow"><span class="pd-mark">WSLSA</span>2027 Degree Guide · Western Sydney University</div>' +
-      '<h1>' + esc(d.title) + '</h1>' +
-      '<div class="pd-sub"><b>Course ' + d.code + '</b> · ' + (o.majorCode === 'BASE' ? '' : (o.majorKind === 'Minor' ? 'Minor: ' : 'Major: ')) + '<b>' + sel + '</b> · <span class="pd-badge">' + esc(badge) + '</span>' + (state.campus ? ' · Primary campus: <b>' + esc(META.campuses[state.campus]) + '</b>' : '') + '</div>' +
+    return '<header class="pd-head"><div class="pd-head-grid"><div class="pd-head-main">' +
+      '<div class="pd-mast"><span class="pd-crest">' + CREST_SVG + '</span><div><div class="pd-eyebrow">Western Sydney Law Students\' Association · 2027 Degree Guide</div><div class="pd-est">Est. 1996 · By students, for students</div></div></div>' +
+      '<h1>' + titleHTML(d.title) + '</h1>' +
+      '<div class="pd-sub"><b>Course ' + d.code + '</b> · ' + (o.majorCode === 'BASE' ? '' : (o.majorKind === 'Minor' ? 'Minor: ' : 'Major: ')) + '<b>' + esc(selectionLabel(ctx)) + '</b> · <span class="pd-badge">' + esc(badge) + '</span>' + (state.campus ? ' · Campus highlight: <b>' + esc(META.campuses[state.campus]) + '</b>' : '') + '</div>' +
       '<dl class="pd-facts">' + facts.map(function (f) { return '<div><dt>' + f[0] + '</dt><dd>' + f[1] + '</dd></div>'; }).join('') + '</dl>' +
+      '<div class="pd-link"><b>Your plan:</b> <span class="pd-plan">' + esc(planUrl()) + '</span></div>' +
       '<div class="pd-link"><b>Official 2027 WSU Handbook:</b> <a href="' + esc(d.handbook) + '">' + esc(d.handbook.replace(/^https?:\/\//, '')) + '</a></div></div>' +
       '<div class="pd-qr">' + (d.qrSvg || '') + '<div class="pd-url"><b>Scan for the</b>2027 Handbook</div></div>' +
       '</div></header>';
   }
   function pdLegend() {
-    const types = [['law', 'Law core'], ['nonlaw', 'Non-law core'], ['major', 'Major / minor'], ['llb', 'LLB alternate'], ['choice', 'Choice'], ['elective', 'Elective']];
-    const colours = { law: '#1f3a68', nonlaw: '#6b5a43', major: '#2c6656', llb: '#990033', choice: '#8f600c', elective: '#574a85' };
-    const bgs = { law: '#e7ecf5', nonlaw: '#f3eee4', major: '#e1efe8', llb: '#f8e7ed', choice: '#fbefd5', elective: '#ece9f5' };
+    const types = [['law', 'Law core', '#8B0029'], ['nonlaw', 'Non-law core', '#334155'], ['major', 'Major / minor', '#0F766E']];
     return '<div class="pd-legend"><span class="pd-lt">Unit type</span>' + types.map(function (t) {
-      return '<span class="pd-sw"><i style="background:' + bgs[t[0]] + ';border-color:' + colours[t[0]] + '"></i>' + t[1] + '</span>';
-    }).join('') + '<span class="pd-sw">◆ your selection</span><span class="pd-sw">italic = still to choose</span></div>';
+      return '<span class="pd-sw"><i style="border-color:' + t[2] + '"></i>' + t[1] + '</span>';
+    }).join('') + '<span class="pd-sw"><i class="slot"></i>Your choice (LLB Alternate, choice, elective)</span><span class="pd-sw">◆ selected by you</span><span class="pd-sw">italic = still to choose</span></div>';
   }
-  function pdTable(sess, list, o) {
+  function pdTable(sess, list, ticks) {
     const cp = list.reduce(function (a, s) { return a + s.cp; }, 0);
-    const ticks = o.ticks && state.track;
     let html = '<table class="pd-t"><colgroup>' + (ticks ? '<col class="c-tick">' : '') + '<col class="c-code"><col><col class="c-camp"><col class="c-cp"></colgroup>' +
-      '<thead><tr><th colspan="' + (ticks ? 5 : 4) + '">' + sess + '<span class="pd-cpt">' + cp + ' CP</span></th></tr></thead><tbody>';
+      '<thead><tr><th colspan="' + (ticks ? 5 : 4) + '">' + sess + ' <span class="pd-sess">Session</span><span class="pd-cpt">' + cp + ' CP</span></th></tr></thead><tbody>';
     if (!list.length) html += '<tr><td class="pd-empty" colspan="' + (ticks ? 5 : 4) + '">No subjects scheduled</td></tr>';
     list.forEach(function (s) {
-      const cls = 'r-' + s.group + (s.pending ? ' r-pending' : '') + (s.done ? ' r-done' : '');
+      const cls = kindClass(s).replace('k-', 'r-') + (s.pending ? ' r-pending' : '') + (s.done ? ' r-done' : '');
       let title = esc(s.pending ? pendingPrintTitle(s) : s.title);
       if (s.chosen) title = '◆ ' + title;
       html += '<tr class="' + cls + '">' + (ticks ? '<td class="pd-tick">' + (s.done ? '✓' : '') + '</td>' : '') +
@@ -962,9 +983,10 @@
     return cleanPoolTitle(s.raw.title);
   }
   function pdGrid(ctx, o) {
+    const ticks = o.ticks && ctx.slots.some(function (s) { return s.done; });
     return timeline(ctx, 'FT').map(function (y) {
-      return '<div class="pd-year"><div class="pd-ylabel">Year ' + y.year + '</div>' +
-        SESSIONS.map(function (sess) { return pdTable(sess, y[sess].slice().sort(function (a, b) { return a.raw.slot - b.raw.slot; }), o); }).join('') + '</div>';
+      return '<div class="pd-year"><div class="pd-ylabel"><span class="pd-roman">' + roman(y.year) + '</span><span class="pd-yword">Year ' + y.year + '</span></div>' +
+        SESSIONS.map(function (sess) { return pdTable(sess, y[sess].slice().sort(function (a, b) { return a.raw.slot - b.raw.slot; }), ticks); }).join('') + '</div>';
     }).join('');
   }
   function pdWarnings(ctx) {
@@ -997,7 +1019,7 @@
   }
   function pdDisclaimer(ctx) {
     const o = ctx.opt;
-    return '<div class="pd-disclaimer"><b>WSLSA disclaimer.</b> ' + esc(disclaimerText()) + ' Generated ' + esc(today()) + ' from ' + esc(META.sourceWorkbook) + ' for ' + esc(ctx.deg.code) + (o.majorCode === 'BASE' ? '' : ' · ' + esc(o.majorCode)) + '. Units marked ◆ are the student\'s own selections.</div>';
+    return '<div class="pd-disclaimer"><b>Official handbook disclaimer.</b> ' + esc(disclaimerText()) + ' Generated ' + esc(today()) + ' from ' + esc(META.sourceWorkbook) + ' for ' + esc(ctx.deg.code) + (o.majorCode === 'BASE' ? '' : ' · ' + esc(o.majorCode)) + '. Units marked ◆ are the student\'s own selections.<div class="pd-footline">' + FOOT_LINE + '</div></div>';
   }
   function shortSource(src) {
     if (/^2027/.test(src || '')) return '2027';
@@ -1062,7 +1084,7 @@
       pdCatalogueTable(ctx, llb, o, 'LLB Alternate Subjects', sub) + '<p class="pd-note">' + esc(ctx.deg.catalogueNote || '') + '</p>' + poolHtml +
       '<section class="pd-foot" style="margin-top:3mm">' + (portrait ? '' : pdWarnings(ctx)) + pdAccreditation(ctx, true) + pdCampusLegend() + pdDisclaimer(ctx) + '</section></article>';
   }
-  function setPageSize(orient) { $('#page-size').textContent = '@page { size: A4 ' + orient + '; margin: 12mm; }'; }
+  function setPageSize(orient) { $('#page-size').textContent = '@page { size: A4 ' + orient + '; margin: 10mm; }'; }
   function preparePrint() {
     const ctx = buildContext();
     setPageSize(state.exp.orient);
@@ -1082,7 +1104,7 @@
       return '<label class="opt-card"><input type="radio" name="' + name + '" value="' + val + '"' + (e[name.replace('exp-', '')] === val ? ' checked' : '') + '><b>' + title + '</b><span>' + desc + '</span></label>';
     };
     $('#modal-root').innerHTML = '<div class="modal-backdrop" data-action="backdrop"><div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="export-h">' +
-      '<div class="modal-head"><div><h2 id="export-h">Export degree guide to PDF</h2><p>Vector-sharp A4 output through your browser\'s print engine. Choose <b>Save as PDF</b> as the destination.</p></div><button type="button" class="modal-x" data-action="modal-close" aria-label="Close">×</button></div>' +
+      '<div class="modal-head"><div><h2 id="export-h">PDF guide options</h2><p>Vector-sharp A4 output through your browser\'s print engine. Choose <b>Save as PDF</b> as the destination.</p></div><button type="button" class="modal-x" data-action="modal-close" aria-label="Close">×</button></div>' +
       '<div class="export-layout"><div class="export-settings">' +
       '<fieldset><legend>Guide type</legend>' +
       radio('exp-mode', 'A', 'Mode A · Custom student pathway', '1–2 pages. Your selected units, campus codes, CP totals, warnings, accreditation and disclaimer.') +
@@ -1090,14 +1112,14 @@
       '</fieldset>' +
       '<fieldset><legend>Orientation</legend><div class="segmented" role="group"><button type="button" data-action="exp-orient" data-v="portrait" aria-pressed="' + (e.orient === 'portrait') + '">A4 portrait</button><button type="button" data-action="exp-orient" data-v="landscape" aria-pressed="' + (e.orient === 'landscape') + '">A4 landscape</button></div></fieldset>' +
       '<fieldset><legend>Options</legend>' +
-      '<label class="check-row"><input type="checkbox" name="exp-ticks"' + (e.ticks ? ' checked' : '') + (state.track ? '' : ' disabled') + '><span>Show completion ticks' + (state.track ? '' : ' (turn on Track progress first)') + '</span></label></fieldset>' +
+      '<label class="check-row"><input type="checkbox" name="exp-ticks"' + (e.ticks ? ' checked' : '') + '><span>Show completion ticks for subjects you have marked done</span></label></fieldset>' +
       '<fieldset id="exp-llb"' + (e.mode === 'B' ? '' : ' disabled') + '><legend>LLB Alternate table (Mode B)</legend>' +
       '<div class="select-wrap"><select name="exp-llbSession" aria-label="Session filter"><option value="all"' + (e.llbSession === 'all' ? ' selected' : '') + '>Autumn and Spring</option><option value="Autumn"' + (e.llbSession === 'Autumn' ? ' selected' : '') + '>Offered in Autumn</option><option value="Spring"' + (e.llbSession === 'Spring' ? ' selected' : '') + '>Offered in Spring</option></select></div>' +
       '<label class="check-row"><input type="checkbox" name="exp-llbCampus"' + (e.llbCampus ? ' checked' : '') + (state.campus ? '' : ' disabled') + '><span>Only at ' + (state.campus ? esc(META.campuses[state.campus]) : 'my campus') + ' or online' + (state.campus ? '' : ' (set a primary campus first)') + '</span></label>' +
       '<label class="check-row"><input type="checkbox" name="exp-llbTbc"' + (e.llbTbc ? ' checked' : '') + '><span>Include subjects with session TBC</span></label></fieldset>' +
       '<p class="export-help"><b>Tips.</b> Paper size A4, scale 100%, margins default. Background tints are forced on with <code>print-color-adjust</code>; if a browser still drops them, tick <b>Background graphics</b> in its print dialog.</p>' +
-      '<button type="button" class="btn btn-primary" data-action="export-print" style="min-height:44px">Save as PDF / Print</button>' +
-      '</div><div class="export-preview" id="export-preview"><div class="preview-meta"><span id="preview-pages">Preview</span><span>A4 · 12 mm margins</span></div><div class="preview-stage" id="preview-stage"></div></div></div></div></div>';
+      '<button type="button" class="btn btn-primary" data-action="export-print" style="min-height:46px">Print / Save PDF →</button>' +
+      '</div><div class="export-preview" id="export-preview"><div class="preview-meta"><span id="preview-pages">Preview</span><span>A4 · 10 mm margins</span></div><div class="preview-stage" id="preview-stage"></div></div></div></div></div>';
     document.body.style.overflow = 'hidden';
     renderExportPreview();
   }
@@ -1125,8 +1147,8 @@
   // (break-inside: avoid on headers, year blocks and footer boxes; table rows may split).
   function estimatePages(doc, orient) {
     const mm = doc.offsetWidth / (orient === 'landscape' ? 297 : 210);
-    const pageH = (orient === 'landscape' ? 186 : 273) * mm;
-    const pad = 12 * mm;
+    const pageH = (orient === 'landscape' ? 190 : 277) * mm;
+    const pad = 10 * mm;
     const blocks = doc.querySelectorAll('.pd-head, .pd-legend, .pd-year, .pd-foot > *, .pd-page-break, .pd-sec-h, .pd-cat-split, table.pd-cat thead, table.pd-cat tbody tr, .pd-note');
     let pages = 1;
     let start = pad;
@@ -1171,6 +1193,14 @@
         break;
       }
       case 'export-open': openExport(); break;
+      case 'print': doPrint(); break;
+      case 'why': ui.whyOpen = !ui.whyOpen; renderHero(ctx); break;
+      case 'open-advisory': {
+        ui.advisoryOpen = true;
+        const box = $('#advisory-box');
+        if (box) { box.open = true; box.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        break;
+      }
       case 'export-print': doPrint(); break;
       case 'exp-orient': state.exp.orient = el.dataset.v; el.parentElement.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b === el)); }); saveState(); renderExportPreview(); break;
       case 'load': state.load = el.dataset.load; render(); break;
@@ -1238,7 +1268,6 @@
     if (t.id === 'sel-degree') { state.degree = t.value; render(); }
     else if (t.id === 'sel-major') { setMajor(t.value); render(); }
     else if (t.id === 'sel-campus') { state.campus = t.value; render(); }
-    else if (t.id === 'tg-track') { state.track = t.checked; render(); }
     else if (t.dataset && t.dataset.action === 'done') {
       const key = currentKey();
       state.done[key] = state.done[key] || {};
@@ -1271,9 +1300,12 @@
   });
 
   window.addEventListener('resize', function () { if (ui.modal === 'export') renderExportPreview(); });
+  // remember whether the advisory panel is open across re-renders (toggle does not bubble)
+  document.addEventListener('toggle', function (ev) { if (ev.target.id === 'advisory-box') ui.advisoryOpen = ev.target.open; }, true);
 
   // ======================================================================== boot
   applyHash();
+  document.querySelectorAll('[data-crest]').forEach(function (el) { el.innerHTML = CREST_SVG; });
   render();
 
   // test hook: lets the automated checks drive the app without relying on UI layout

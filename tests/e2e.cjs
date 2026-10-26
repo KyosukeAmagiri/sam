@@ -58,8 +58,8 @@ async function renderPdf(page, key, mode, orient, file) {
     const ctx = WSLSA.context();
     return {
       key: k, degree: ctx.deg.code, cp: ctx.deg.cp, totalCP: ctx.totalCP, slots: ctx.slots.length,
-      domSlots: document.querySelectorAll('#grid .slot').length,
-      gridText: document.getElementById('grid').textContent + document.getElementById('risks').textContent,
+      domSlots: document.querySelectorAll('#grid .subj').length,
+      gridText: document.getElementById('grid').textContent + document.getElementById('advisory').textContent + document.getElementById('hero-meta').textContent + document.getElementById('facts').textContent,
       majorOptions: Array.from(document.querySelectorAll('#sel-major option')).map(o => o.value),
       locked: !!document.getElementById('major-locked'),
       degOptions: ctx.deg.options,
@@ -164,8 +164,7 @@ async function renderPdf(page, key, mode, orient, file) {
 
   // ---------------------------------------------------------------- progress tracking
   await page.evaluate(() => WSLSA.select('2788|T046'));
-  await page.click('label.switch');
-  await page.click('.session-actions [data-action="session-done"]');
+  await page.click('#grid [data-action="session-done"]');
   check(/^40 \/ 400/.test((await page.textContent('#progress-num')).trim()), 'marking a full session should show 40 / 400 CP');
 
   // ---------------------------------------------------------------- campus filter
@@ -184,6 +183,30 @@ async function renderPdf(page, key, mode, orient, file) {
   await p2.goto(APP + '#plan=not-valid-base64!!');
   check(await p2.evaluate(() => !!WSLSA.context().key), 'a malformed plan link should fall back gracefully');
   await fresh.close();
+
+  // ---------------------------------------------------------------- redesign: roman numerals, advisory, tabs, checkbox
+  await page.evaluate(() => WSLSA.select('2843|BASE'));
+  const romans = await page.$$eval('#grid .year-seal', els => els.map(e => e.textContent));
+  check(JSON.stringify(romans) === JSON.stringify(['I', 'II', 'III', 'IV', 'V', 'VI']), `2843 year seals should read I to VI, got ${romans}`);
+  await page.evaluate(() => WSLSA.select('2788|T046'));
+  check(await page.$eval('#advisory-box', d => !d.open), 'advisory starts collapsed');
+  await page.click('#grid .flag-warn[data-action="open-advisory"]');
+  check(await page.$eval('#advisory-box', d => d.open), 'Check prerequisite flag should open the advisory');
+  check(/2 prerequisite notes/.test(await page.textContent('#advisory-box summary')), 'advisory summary should count the 2 ACCT notes');
+  await page.click('#tab-admission');
+  check(/Exit awards/.test(await page.textContent('#details')), 'admission tab should show exit awards');
+  await page.click('#tab-catalogue');
+  await page.fill('#cat-q', 'Revenue');
+  check(/LAWS 4008/.test(await page.textContent('#cat-results')), 'catalogue search should find LAWS 4008');
+  await page.click('#tab-structure');
+  const before = await page.evaluate(() => WSLSA.context().doneCP);
+  await page.click('#slot-3S1 .tick');
+  check(await page.evaluate(() => WSLSA.context().doneCP) === before + 10, 'ticking a subject should add 10 CP');
+  check(await page.$eval('#slot-3S1', el => el.classList.contains('is-done')), 'ticked subject should be marked done');
+  await page.click('#slot-3S1 .tick');
+  check(await page.evaluate(() => WSLSA.context().doneCP) === before, 'unticking should remove the CP again');
+  const planDoc = await page.evaluate(() => WSLSA.buildPrintDoc({ mode: 'A', orient: 'portrait' }));
+  check(/#plan=/.test(planDoc) && /Est\. 1996/.test(planDoc), 'PDF masthead should carry the plan link and Est. 1996 line');
 
   // ---------------------------------------------------------------- export modal and print document
   await page.click('[data-action="export-open"]');
@@ -240,7 +263,6 @@ async function renderPdf(page, key, mode, orient, file) {
           await pdfPage.click(`#slot-${slot} [data-action="picker-open"]`);
           await pdfPage.click(`#pick-results .pick[data-code="${code}"]`);
         }
-        await pdfPage.click('label.switch');
         for (const i of [0, 1]) await pdfPage.locator('#grid .year:first-child [data-action="session-done"]').nth(i).click();
         const samples = [
           ['2788|T046', 'A', 'portrait', '2788-T046-accounting-custom-pathway-A4-portrait.pdf'],

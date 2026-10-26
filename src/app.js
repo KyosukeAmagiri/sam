@@ -725,7 +725,8 @@
   }
 
   function renderFoot() {
-    $('#site-foot').innerHTML = '<p><b>WSLSA disclaimer.</b> ' + esc(disclaimerText()) + '</p>' +
+    $('#site-foot').innerHTML = '<p><b>Your plan stays on this device.</b> Choices and progress are saved in this browser only and are never uploaded. To continue on another phone or computer, use Copy plan link and open that link there.</p>' +
+      '<p><b>WSLSA disclaimer.</b> ' + esc(disclaimerText()) + '</p>' +
       '<p>' + esc(META.legend.replace(/^Legend:\s*/, '').replace('tinted rows are law subjects. ', '')) + '</p>';
   }
 

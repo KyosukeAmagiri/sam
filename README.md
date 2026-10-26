@@ -2,7 +2,9 @@
 
 An interactive degree pathway explorer and PDF guide generator for Western Sydney University law students, built entirely from the Western Sydney Law Students' Association **WSLSA Degree Guides 2027** workbook (2027 Student Handbook data).
 
-**To use it, open `dist/wslsa-pathway-explorer.html` in any modern browser.** It is a single self-contained file (about 590 KB) with every degree, pathway and subject embedded, so it works offline, can be emailed, or can be hosted on any static site (GitHub Pages, SharePoint, a WSLSA website). Nothing is sent anywhere: choices are stored in the browser and in the page's URL.
+**Live site: https://kyosukeamagiri.github.io/sam/** (works on phones, tablets and computers). Sample PDF exports are at https://kyosukeamagiri.github.io/sam/samples/.
+
+The same app is a single self-contained file, `dist/wslsa-pathway-explorer.html` (about 590 KB), with every degree, pathway and subject embedded, so it also works offline, can be emailed, or can be hosted anywhere static (SharePoint, a WSLSA website). Nothing is sent anywhere: a student's choices are saved in their own browser, and the Copy plan link button carries a plan to another device.
 
 ## What it does
 
@@ -51,6 +53,12 @@ python3 scripts/build_app.py
 
 To test, install Playwright with Chromium (`npm install` then `npx playwright install chromium`) and run `npm test` for the behaviour checks across all 48 pathways, `npm run test:pdf` to also render every pathway in both modes and orientations and check page counts and page placement (needs poppler's `pdfinfo` and `pdftotext`), or `npm run samples` to regenerate the PDFs in `samples/`.
 
+## Publishing
+
+`.github/workflows/pages.yml` runs on every push. It validates the data, confirms the committed `dist/` build matches the source, and runs the end-to-end checks in Chromium. When those pass on the default branch, it publishes the app to GitHub Pages as `index.html`, together with the sample PDFs. The one-time setup is **Settings > Pages > Build and deployment > Source: GitHub Actions**; until then the workflow still tests every push and leaves a notice instead of publishing.
+
+To update the live site after the workbook changes, replace the file in `data/source/`, run the three rebuild commands above, and push. Renaming the repository (for example to `wslsa-pathway-explorer`) changes the address to `https://kyosukeamagiri.github.io/<new-name>/`.
+
 ## Repository layout
 
 | Path | Purpose |
@@ -61,6 +69,7 @@ To test, install Playwright with Chromium (`npm install` then `npx playwright in
 | `data/source/` | The source workbook |
 | `scripts/` | Extract, validate and build scripts |
 | `tests/e2e.cjs` | Playwright end-to-end and PDF checks |
+| `.github/workflows/pages.yml` | Test-then-publish workflow for GitHub Pages |
 | `samples/` | Example exports: 2788 Accounting (Mode A and B, portrait) and 2848 (Mode A, landscape) |
 
 ## Notes on the data

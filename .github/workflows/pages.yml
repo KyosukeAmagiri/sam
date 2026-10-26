@@ -1,0 +1,94 @@
+# Checks the data and app on every push, then publishes the explorer to GitHub Pages from the
+# repository's default branch. One-time setup: Settings > Pages > Source: GitHub Actions.
+name: Test and publish site
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate extracted data
+        run: python3 scripts/validate_data.py
+
+      - name: Check the committed build matches the source
+        run: |
+          python3 scripts/build_app.py
+          git diff --exit-code -- dist/ || { echo "::error::dist/ is out of date. Run python3 scripts/build_app.py and commit the result."; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Playwright
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: End-to-end checks across all 48 pathways
+        run: npm test
+
+  deploy:
+    needs: test
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check GitHub Pages is switched on
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          build_type=$(gh api "repos/${{ github.repository }}/pages" --jq .build_type 2>/dev/null || true)
+          if [ "$build_type" = "workflow" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Site not published yet: in Settings > Pages, set Source to 'GitHub Actions', then re-run this workflow."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.pages.outputs.enabled == 'true'
+
+      - name: Assemble site
+        if: steps.pages.outputs.enabled == 'true'
+        run: |
+          mkdir -p _site/samples
+          cp dist/wslsa-pathway-explorer.html _site/index.html
+          cp samples/*.pdf _site/samples/
+          touch _site/.nojekyll
+
+      - uses: actions/configure-pages@v5
+        if: steps.pages.outputs.enabled == 'true'
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.pages.outputs.enabled == 'true'
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        if: steps.pages.outputs.enabled == 'true'
+        uses: actions/deploy-pages@v4

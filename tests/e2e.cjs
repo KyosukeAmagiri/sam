@@ -123,13 +123,20 @@ async function renderPdf(page, key, mode, orient, file) {
   check(await page.$eval('#pick-results .pick[data-code="LAWS 3067"]', b => b.disabled), 'a subject already in the plan must be disabled in other slots');
   await page.keyboard.press('Escape');
 
-  // custom elective
+  // custom elective: a code in neither the workbook nor the subject list is stored as typed
   await page.click('#slot-1A4 [data-action="picker-open"]');
-  await page.fill('#cu-code', 'humn 1052');
-  await page.fill('#cu-title', 'Australian Politics and Active Citizenship');
+  await page.fill('#cu-code', 'test 1001');
+  await page.fill('#cu-title', 'Unlisted Subject');
   await page.click('#custom-form button[type=submit]');
   const el = await page.evaluate(() => { const s = WSLSA.context().byId['1A4']; return [s.code, s.custom]; });
-  check(el[0] === 'HUMN 1052' && el[1] === true, 'custom elective should be stored and upper-cased');
+  check(el[0] === 'TEST 1001' && el[1] === true, 'custom elective should be stored and upper-cased');
+  // a workbook subject from another degree typed by hand resolves to the real subject, not a custom one
+  await page.click('#slot-1A4 [data-action="picker-open"]');
+  await page.fill('#cu-code', 'humn1052');
+  await page.fill('#cu-title', 'my own title');
+  await page.click('#custom-form button[type=submit]');
+  const known = await page.evaluate(() => { const s = WSLSA.context().byId['1A4']; return [s.code, !!s.custom, s.title]; });
+  check(known[0] === 'HUMN 1052' && !known[1] && known[2] !== 'my own title', 'a typed workbook code should resolve to the 2027 Handbook subject and title');
 
   // ---------------------------------------------------------------- inline choices and duplicate prevention
   const dupe = await page.evaluate(() => {
@@ -191,6 +198,8 @@ async function renderPdf(page, key, mode, orient, file) {
   check(!/Any WSU subject/.test(await page.textContent('#pick-results')), 'LLB Alternate slots must not offer the any-subject list');
   await page.keyboard.press('Escape');
   await page.click('#slot-1S4 [data-action="picker-open"]');
+  const useBtn = await page.$eval('#custom-form button[type=submit]', b => [getComputedStyle(b).backgroundColor, getComputedStyle(b).color]);
+  check(useBtn[0] !== useBtn[1] && useBtn[0] !== 'rgb(255, 255, 255)', '"Use subject" must render as a filled primary button, not white on white');
   for (const q of ['ACCT2004', 'acct 2004', 'ACCT 2004']) {
     await page.fill('#pick-q', q);
     check(/Exact match/.test(await page.textContent('.pick-best')) && /ACCT 2004/.test(await page.textContent('.pick-best')), `"${q}" should pin ACCT 2004 as the exact match`);

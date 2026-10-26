@@ -2,9 +2,9 @@
 
 An interactive degree pathway explorer and PDF guide generator for Western Sydney University law students, built entirely from the Western Sydney Law Students' Association **WSLSA Degree Guides 2027** workbook (2027 Student Handbook data).
 
-**Live site: https://kyosukeamagiri.github.io/wslsa/** (works on phones, tablets and computers).
+**Live site: https://wslsa.github.io/wslsa/** (works on phones, tablets and computers).
 
-Sample PDF exports: [2788 Accounting, custom pathway (Mode A)](https://kyosukeamagiri.github.io/wslsa/samples/2788-T046-accounting-custom-pathway-A4-portrait.pdf) · [2788 Accounting, complete handbook sheet (Mode B)](https://kyosukeamagiri.github.io/wslsa/samples/2788-T046-accounting-handbook-sheet-A4-portrait.pdf) · [2848 Laws, custom pathway, landscape (Mode A)](https://kyosukeamagiri.github.io/wslsa/samples/2848-laws-custom-pathway-A4-landscape.pdf)
+Sample PDF exports: [2788 Accounting, custom pathway (Mode A)](https://wslsa.github.io/wslsa/samples/2788-T046-accounting-custom-pathway-A4-portrait.pdf) · [2788 Accounting, complete handbook sheet (Mode B)](https://wslsa.github.io/wslsa/samples/2788-T046-accounting-handbook-sheet-A4-portrait.pdf) · [2848 Laws, custom pathway, landscape (Mode A)](https://wslsa.github.io/wslsa/samples/2848-laws-custom-pathway-A4-landscape.pdf)
 
 The same app is a single self-contained file, `dist/wslsa-pathway-explorer.html` (about 600 KB), with every degree, pathway and subject embedded, so it also works offline, can be emailed, or can be hosted anywhere static (SharePoint, a WSLSA website). Nothing is sent anywhere: a student's choices are saved in their own browser, and the Copy Share Link button carries a plan to another device.
 

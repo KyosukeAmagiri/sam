@@ -4,6 +4,8 @@
    node tests/e2e.cjs            # behaviour checks across all 48 pathways
    node tests/e2e.cjs --pdf      # also renders every pathway to PDF (needs pdfinfo/pdftotext from poppler)
    node tests/e2e.cjs --samples  # also writes the sample PDFs in samples/
+   node tests/e2e.cjs --import   # also uploads generated results PDFs, one as text and one as a picture
+                                 # (loads the PDF reader and text recogniser from jsDelivr, so needs internet)
 
    Requires Playwright with Chromium (npm i -D playwright && npx playwright install chromium). */
 'use strict';
@@ -447,6 +449,93 @@ async function renderPdf(page, key, mode, orient, file) {
   check(/Autumn 2030/.test(await pp.textContent('#facts')), 'removing Year 4 Spring should bring the finish forward to Autumn 2030');
   check(pp.errors.length === 0, 'progress tools console errors: ' + pp.errors.join('; '));
   await pp.close();
+
+  // ---------------------------------------------------------------- tick off from a PDF (lines as the PDF reader gives them)
+  const ip = await newPage(browser);
+  await ip.goto(APP);
+  const importRows = () => ip.$$eval('#import-results .pick-section', ss => ss.map(s => [s.querySelector('h4 span').textContent,
+    Array.from(s.querySelectorAll('.import-row')).map(r => r.querySelector('code').textContent + (r.querySelector('input').checked ? '+' : '-')).concat(
+      Array.from(s.querySelectorAll('.chipbtn code')).map(c => c.textContent))]));
+  await ip.evaluate(() => { localStorage.clear(); WSLSA.select('2785|BASE'); });
+  await ip.click('[data-action="import-open"]');
+  check(!!(await ip.$('#import-file[accept*="pdf"]')) && !!(await ip.$('[data-action="import-file"]')), 'the import dialog should offer a PDF upload');
+  await ip.setInputFiles('#import-file', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('LAWS 1003') });
+  check(/not a PDF/.test(await ip.textContent('#import-status')) && !(await ip.$('.import-row')), 'a file that is not a PDF should be refused');
+  await ip.evaluate(lines => WSLSA.importPdfLines(lines), [
+    'Western Sydney University Audit', 'Student, Sample - 10000000', 'Degree progress 40%',
+    'Accounting and Laws Core INCOMPLETE', 'Subject Title Grade Credit Points Term',
+    'Fundamentals of Australian Law LAWS 1003 Fundamentals of Australian Law D 10 2024 Autumn, SC 1,', 'WSTC T1',
+    'Corporate Finance (UG) ECON 2002 Corporate Financial Management H 10 2024 Spring',
+    'Alternate Subject MATH 1030 Statistics for Business C 10 2024 Autumn, SC 1,',
+    'Torts Law LAWS 2013 Torts Law F 0 2024 Spring',
+    'Government and Public Law LAWS 2008 Government and Public Law NA (10) 2026 Spring',
+    'Equity & Trusts Still needed: 10 Credit Points in LAWS 3018',
+    'Laws Alternate Pool Subject List LAWS 2012 Regulatory Risk and Compliance P 10 2024 Summer',
+    '60 Credit Points in JUST 2013 or 3008 or LAWS 2005 or 2007 or 3001',
+    'Legal Analysis and Critique LAWS 1009 Legal Analysis and Critique D 10 2024 Spring',
+    'Not Currently Applied NOAW 0004 Academic Integrity Module S 0 2024 Autumn, SC 1, WSTC T1',
+    'Ellucian Degree Works - Copyright 1995-2026 Ellucian Company L.P.',
+  ]);
+  check(/Degree Works audit: 5 passed subjects/.test(await ip.textContent('#import-status')), `the audit should report 5 passed subjects, got "${await ip.textContent('#import-status')}"`);
+  const dw = await importRows();
+  check(JSON.stringify(dw) === JSON.stringify([['In your plan', ['LAWS 1003+', 'FINC 2003+', 'LAWS 2013-', 'LAWS 2008-']], ['Fills an open choice', ['MATH 1030+', 'LAWS 2012+']], ['Not in your plan', ['LAWS 1009']]]),
+    `an audit should tick passes (and the plan subject a requirement names), leave fails and subjects in progress, fill open choices and skip Still needed lists, got ${JSON.stringify(dw)}`);
+  const review = await ip.textContent('#import-results');
+  check(/counts ECON 2002/.test(review) && !review.includes('2024') && !review.includes('(10)') && !/\bNA\b/.test(review), 'the review should name the counted subject and show no grades, credit points or terms');
+  await ip.click('#import-apply');
+  const dwDone = await ip.evaluate(() => { const c = WSLSA.context(); return c.slots.filter(s => s.done).map(s => s.code).sort().join(',') + '|' + c.byId['1S4'].code; });
+  check(dwDone === 'FINC 2003,LAWS 1003,LAWS 2012,MATH 1030|MATH 1030', `applying the audit should tick and place the passed subjects, got ${dwDone}`);
+  // the Subject Results page, read from printed pages: OCR slips in codes and grades are tolerated, rows without a grade are left
+  await ip.click('[data-action="import-open"]');
+  await ip.evaluate(lines => WSLSA.importPdfLines(lines), [
+    'Subject Results', '2785 - Bachelor of Accounting/Bachelor of Laws',
+    'TERM SUBJECT CODE SUBJECT TITLE GRADE MARK CREDIT COUNTED in REASON', 'POINTS GPA PROVIDED (if no',
+    '2026 ACCT3007 Corporate D 76 10', 'Autumn Accounting v', '2026 ACCT3001 Accounting Information 10',
+    '2025 LAWS2O03 Contracts Cc 75 10', '2024 ECON1016 Evidence-Based AF 12 0', '2024 NOAWO0004 Academic Integrity S 100 0',
+    '2025 ACCT2005 Techs in Finan (¢} 71 10', '2024 ACCT1007 Financial 44 10',
+    'View your DegreeWorks audit (https://dw-prod.example/worksheets/WEB31) to',
+  ]);
+  check(/Subject Results page: 3 passed subjects/.test(await ip.textContent('#import-status')), `the results page should report 3 passed subjects, got "${await ip.textContent('#import-status')}"`);
+  const sr = await importRows();
+  check(JSON.stringify(sr) === JSON.stringify([['In your plan', ['ACCT 3007+', 'LAWS 2003+', 'ACCT 2005+', 'ACCT 1007-']]]), `results should tick passes read with OCR slips (an unreadable grade falls back to the mark) and skip rows with no result, got ${JSON.stringify(sr)}`);
+  // typing over a PDF's results switches to the pasted text
+  await ip.fill('#import-text', 'ACCT 1005');
+  await ip.waitForTimeout(100);
+  check(JSON.stringify(await importRows()) === JSON.stringify([['In your plan', ['ACCT 1005+']]]) && await ip.isHidden('#import-status'), 'pasted text should replace the PDF results');
+  await ip.click('[data-action="modal-close"]');
+  check(ip.errors.length === 0, 'PDF import console errors: ' + ip.errors.join('; '));
+  await ip.close();
+
+  // ---------------------------------------------------------------- tick off from real PDF files (loads the PDF reader and text recogniser from jsDelivr)
+  if (args.has('--import')) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wslsa-import-'));
+    const maker = await newPage(browser, { viewport: { width: 820, height: 600 }, deviceScaleFactor: 2 });
+    const rows = [['2024 Autumn', 'LAWS1003', 'Fundamentals of Australian Law', 'D', '77', '10'], ['2024 Spring', 'LAWS2013', 'Torts Law', 'F', '31', '0'],
+      ['2025 Autumn', 'LAWS2003', 'Contracts', 'C', '68', '10'], ['2025 Spring', 'LAWS2012', 'Regulatory Risk and Compliance', 'P', '55', '10']];
+    // cells are top-aligned, as on the real page, so each subject's grade, mark and credit points share its code's line
+    const table = '<style>td,th{vertical-align:top}</style><h1>Subject Results</h1><table style="font:16px Arial;border-spacing:22px 14px"><tr><th>TERM</th><th>SUBJECT CODE</th><th>SUBJECT TITLE</th><th>GRADE</th><th>MARK</th><th>CREDIT POINTS</th></tr>' +
+      rows.map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('') + '</table>';
+    await maker.setContent(table);
+    await maker.pdf({ path: path.join(tmp, 'results-text.pdf'), format: 'A4' });
+    // the same page as a picture, as Print to PDF can save it: there is no text to read, so it goes through OCR
+    const shot = await maker.screenshot({ fullPage: true, type: 'png' });
+    await maker.setContent(`<img src="data:image/png;base64,${shot.toString('base64')}" style="width:100%">`);
+    await maker.pdf({ path: path.join(tmp, 'results-image.pdf'), format: 'A4' });
+    await maker.close();
+    for (const [file, label] of [['results-text.pdf', 'text'], ['results-image.pdf', 'image']]) {
+      const up = await newPage(browser);
+      await up.goto(APP);
+      await up.evaluate(() => { localStorage.clear(); WSLSA.select('2848|BASE'); });
+      await up.click('[data-action="import-open"]');
+      await up.setInputFiles('#import-file', path.join(tmp, file));
+      await up.waitForSelector('#import-status.is-ok, #import-status.is-error', { timeout: 180000 });
+      const got = await up.$$eval('#import-results .import-row', rs => rs.map(r => r.querySelector('code').textContent + (r.querySelector('input').checked ? '+' : '-')));
+      check(JSON.stringify(got) === JSON.stringify(['LAWS 1003+', 'LAWS 2013-', 'LAWS 2003+', 'LAWS 2012+']), `a ${label} PDF should give the passed subjects ticked and the fail unticked, got ${JSON.stringify(got)} (${await up.textContent('#import-status')})`);
+      check(up.errors.length === 0, `${label} PDF import console errors: ` + up.errors.join('; '));
+      await up.close();
+    }
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 
   // ---------------------------------------------------------------- mobile layout
   const m = await newPage(browser, { viewport: { width: 390, height: 844 } });

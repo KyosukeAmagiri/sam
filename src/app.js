@@ -1170,7 +1170,7 @@
     const next = nextSession(ctx);
     const actions = function (codes) {
       return '<div class="next-actions">' + (codes.length ? '<button type="button" class="tbtn tbtn-primary" data-action="copy-codes" data-codes="' + esc(codes.join(', ')) + '">Copy subject codes</button>' : '') +
-        '<button type="button" class="tbtn tbtn-outline" data-action="import-open" title="Paste your academic record or results to tick off the subjects you have passed">Tick off from my results</button></div>';
+        '<button type="button" class="tbtn tbtn-outline" data-action="import-open" title="Add your Degree Works audit or Subject Results PDF, or paste your results, to tick off the subjects you have passed">Tick off from my results</button></div>';
     };
     if (!next) {
       $('#next').innerHTML = '<div class="next-card"><div class="next-main"><p class="kicker">Next to enrol</p><h3>' + (ctx.slots.length ? 'Every subject in your plan is ticked off' : 'Your plan has no subjects yet') + '</h3></div>' + actions([]) + '</div>';
@@ -1561,6 +1561,8 @@
     ui.picker = null;
     ui.setupSummer = 0;
     ui.importFound = null;
+    ui.importFrom = null;
+    ui.importJob = (ui.importJob || 0) + 1;
     $('#modal-root').innerHTML = '';
     document.body.style.overflow = '';
   }
@@ -2056,11 +2058,13 @@
   }
 
   // ======================================================================== tick off from results
-  // Every subject code in pasted text (an academic record, results or a plain list) is matched to the
-  // plan. A code followed on its line by a fail or withdrawal grade is left unticked for the student
-  // to check. Nothing pasted is stored or sent anywhere.
+  // Subjects come from pasted text (an academic record, results or a plain list) or from a PDF of the
+  // Degree Works audit or the Subject Results page. Only which subjects were passed is used: grades,
+  // marks and everything else in the text stay out of the plan, and nothing pasted or uploaded is
+  // stored or sent anywhere.
   const FAIL_MARK = /(^|[^A-Za-z])(F|FF|AF|FAIL|FAILED|W|WD|WN|WITHDRAWN|INCOMPLETE|DNS)(?![A-Za-z])/i;
-  function parseResults(text, ctx) {
+  // pasted text: every code counts, except one followed on its line by a fail or withdrawal grade
+  function parseResults(text) {
     const found = [];
     const seen = {};
     String(text || '').split(/\r?\n/).forEach(function (line) {
@@ -2072,51 +2076,355 @@
         if (seen[h.code]) return;
         seen[h.code] = 1;
         // the grade belongs to the text between this code and the next one on the line
-        found.push({ code: h.code, failed: FAIL_MARK.test(line.slice(h.end, i + 1 < hits.length ? hits[i + 1].start : line.length)) });
+        found.push({ code: h.code, status: FAIL_MARK.test(line.slice(h.end, i + 1 < hits.length ? hits[i + 1].start : line.length)) ? 'failed' : 'done' });
       });
     });
+    return found;
+  }
+
+  // ---- PDFs. A subject counts only when its row carries a grade followed by its credit points
+  // (Degree Works: "D 10") or its mark and credit points (Subject Results: "D 76 10"), so codes in
+  // "Still needed" lists, choice pools and notes are never ticked. NA with credit points in brackets
+  // is Degree Works for a subject still in progress.
+  const PASS_GRADES = ['H', 'HD', 'D', 'DN', 'C', 'CR', 'P', 'PS', 'PC', 'S', 'SY', 'T', 'TR', 'AS', 'CT', 'EX', 'RPL'];
+  const FAIL_GRADES = ['F', 'AF', 'FN', 'FW', 'U', 'US', 'UN', 'N', 'NS', 'W', 'WD', 'WN', 'WF', 'AB', 'ABS', 'X', 'DNS'];
+  const PROGRESS_GRADES = ['NA', 'IP', 'I', 'DE', 'GP', 'RP'];
+  const STATUS_RANK = { failed: 1, progress: 2, done: 3 };
+  const RESULT_NUM = /^\(?\d{1,3}(\.\d+)?\)?$/;
+  // read from printed pages, a code can come back with a digit as a letter (LAWS 2O03) or a letter as a digit (N0AW)
+  const PDF_CODE = /(^|[^A-Za-z0-9])([A-Za-z][A-Za-z0-9]{3})\s?([0-9OoIlSB]{4})(?![A-Za-z0-9])/g;
+  function pdfCode(letters, digits) {
+    if ((digits.match(/\d/g) || []).length < 2) return '';
+    const l = letters.toUpperCase().replace(/0/g, 'O').replace(/1/g, 'I').replace(/5/g, 'S').replace(/8/g, 'B');
+    const d = digits.replace(/[Oo]/g, '0').replace(/[Il]/g, '1').replace(/S/g, '5').replace(/B/g, '8');
+    return /^[A-Z]{4}$/.test(l) ? l + ' ' + d : '';
+  }
+  function gradeStatus(tok) {
+    if (!/^[A-Z]/.test(tok)) return '';
+    // a letter read twice ("Cc") is still one grade
+    const g = tok.replace(/[^A-Za-z]/g, '').toUpperCase().replace(/(.)\1+/g, '$1');
+    if (g.length > 3) return '';
+    return PASS_GRADES.indexOf(g) >= 0 ? 'done' : FAIL_GRADES.indexOf(g) >= 0 ? 'failed' : PROGRESS_GRADES.indexOf(g) >= 0 ? 'progress' : '';
+  }
+  // the result in the words after a code: the first grade followed by numbers, the last of which is the credit points
+  function rowResult(words, audit) {
+    for (let i = 0; i < words.length - 1; i++) {
+      const status = gradeStatus(words[i]);
+      if (!status || !RESULT_NUM.test(words[i + 1])) continue;
+      let j = i + 1;
+      while (j + 1 < words.length && RESULT_NUM.test(words[j + 1])) j++;
+      const cp = words[j];
+      return { status: /^\(/.test(cp) && status === 'done' ? 'progress' : status, cp: parseFloat(cp.replace(/[()]/g, '')) };
+    }
+    // a grade the text reader could not make out on the Subject Results page: its mark and credit points
+    // still say whether the subject was passed, as every mark from 50 is a pass
+    for (let i = 0; !audit && i < words.length - 1; i++) {
+      if (/^\d{1,3}$/.test(words[i]) && +words[i] <= 100 && /^\d{1,2}$/.test(words[i + 1]) && !RESULT_NUM.test(words[i + 2] || '')) {
+        return { status: +words[i] >= 50 ? 'done' : 'failed', cp: +words[i + 1] };
+      }
+    }
+    return null;
+  }
+  // lines of a PDF in reading order: one subject per line in both formats. In an audit the text before
+  // the code is the requirement it counts for, kept as a label.
+  function parsePdfLines(lines, audit) {
+    const best = {};
+    const order = [];
+    lines.forEach(function (line) {
+      const re = new RegExp(PDF_CODE.source, 'g');
+      let m;
+      while ((m = re.exec(line))) {
+        const code = pdfCode(m[2], m[3]);
+        const res = code && rowResult(line.slice(re.lastIndex).trim().split(/\s+/), audit);
+        // zero credit point modules (the academic integrity module) are not part of a plan
+        if (!res || (res.cp === 0 && res.status === 'done')) continue;
+        const label = audit ? line.slice(0, m.index + m[1].length).trim() : '';
+        const prev = best[code];
+        if (!prev) { best[code] = { code: code, status: res.status, label: label }; order.push(code); }
+        else if (STATUS_RANK[res.status] > STATUS_RANK[prev.status]) { prev.status = res.status; prev.label = label || prev.label; }
+      }
+    });
+    return order.map(function (c) { return best[c]; });
+  }
+  // groups words into lines by their vertical position, with y measured down from the top of the page
+  function pageLines(items) {
+    const lines = [];
+    items.filter(function (it) { return it.s.trim(); }).sort(function (a, b) { return a.y - b.y || a.x - b.x; }).forEach(function (it) {
+      const last = lines[lines.length - 1];
+      if (last && Math.abs(it.y - last.y) <= Math.max(last.h, it.h) * 0.5) last.items.push(it);
+      else lines.push({ y: it.y, h: it.h, items: [it] });
+    });
+    return lines.map(function (l) {
+      let text = '';
+      let end = -Infinity;
+      l.items.sort(function (a, b) { return a.x - b.x; }).forEach(function (it) {
+        // pieces of one word sit right next to each other
+        text += (text && it.x - end > it.h * 0.15 ? ' ' : '') + it.s.trim();
+        end = it.x + it.w;
+      });
+      return text;
+    });
+  }
+
+  // The PDF reader and, for printed pages that hold pictures of text, a text recogniser load from
+  // jsDelivr the first time a student adds a PDF. Versions are pinned, and the scripts that run on this
+  // page are checked against their hashes first. The file itself is read on this device.
+  const PDF_LIBS = {
+    reader: ['https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs', 'sha384-z/XbAtvhBXJoK+yvYimnFuTCF6/2wTCDSIFD09/HtIfwFtvDKOMdAe5Z3wOChkmW'],
+    parser: ['https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs', 'sha384-vbNBYP03jHFPlgtK4qSXtazEmGfmpTWlSsfq9OiU20MroW/Q9TbaEXiM7PpeWg+6'],
+    ocr: ['https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js', 'sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F'],
+  };
+  const OCR_FILES = {
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',
+    langPath: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int',
+  };
+  const PDF_MAX_PAGES = 12;
+  const OCR_SCALE = 3;
+  const STALE = {};
+  function libError(e) { e.lib = true; throw e; }
+  function verifiedModule(lib) {
+    return fetch(lib[0]).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.arrayBuffer();
+    }).then(function (buf) {
+      return crypto.subtle.digest('SHA-384', buf).then(function (h) {
+        if ('sha384-' + btoa(String.fromCharCode.apply(null, new Uint8Array(h))) !== lib[1]) throw new Error('integrity');
+        return import(URL.createObjectURL(new Blob([buf], { type: 'text/javascript' })));
+      });
+    });
+  }
+  let pdfReader = null;
+  function loadPdfReader() {
+    if (!pdfReader) {
+      // the parser runs on this page rather than in a worker, which also works when the explorer is opened as a file
+      pdfReader = Promise.all([verifiedModule(PDF_LIBS.reader), verifiedModule(PDF_LIBS.parser)]).then(function (mods) {
+        window.pdfjsWorker = mods[1];
+        return mods[0];
+      });
+      pdfReader.catch(function () { pdfReader = null; });
+    }
+    return pdfReader.catch(libError);
+  }
+  let ocrScript = null;
+  // a fresh recogniser for each file, closed when the file is done since it holds its language data in memory
+  function loadOcr() {
+    if (!ocrScript) {
+      ocrScript = window.Tesseract ? Promise.resolve(window.Tesseract) : new Promise(function (resolve, reject) {
+        const s = document.createElement('script');
+        s.src = PDF_LIBS.ocr[0];
+        s.integrity = PDF_LIBS.ocr[1];
+        s.crossOrigin = 'anonymous';
+        s.onload = function () { resolve(window.Tesseract); };
+        s.onerror = function () { s.remove(); reject(new Error('OCR script')); };
+        document.head.appendChild(s);
+      });
+      ocrScript.catch(function () { ocrScript = null; });
+    }
+    return ocrScript.then(function (T) {
+      return T.createWorker('eng', 1, OCR_FILES);
+    }).then(function (w) {
+      // one block of text: keeps the narrow grade and mark columns that page layout analysis drops
+      return w.setParameters({ tessedit_pageseg_mode: '6' }).then(function () { return w; });
+    }).catch(libError);
+  }
+  function textItems(tc) {
+    return tc.items.map(function (it) {
+      const t = it.transform;
+      return { s: it.str, x: t[4], y: -t[5], h: Math.hypot(t[2], t[3]) || it.height || 10, w: it.width };
+    });
+  }
+  function ocrItems(worker, page) {
+    const vp = page.getViewport({ scale: OCR_SCALE });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(vp.width);
+    canvas.height = Math.ceil(vp.height);
+    const c2d = canvas.getContext('2d');
+    c2d.fillStyle = '#fff';
+    c2d.fillRect(0, 0, canvas.width, canvas.height);
+    return page.render({ canvasContext: c2d, viewport: vp }).promise.then(function () {
+      return worker.recognize(canvas, {}, { blocks: true, text: false });
+    }).then(function (r) {
+      canvas.width = canvas.height = 0;
+      const items = [];
+      (r.data.blocks || []).forEach(function (b) {
+        b.paragraphs.forEach(function (p) {
+          p.lines.forEach(function (l) {
+            l.words.forEach(function (w) { items.push({ s: w.text, x: w.bbox.x0, y: (w.bbox.y0 + w.bbox.y1) / 2, h: w.bbox.y1 - w.bbox.y0, w: w.bbox.x1 - w.bbox.x0 }); });
+          });
+        });
+      });
+      return items;
+    });
+  }
+  function readPdf(file) {
+    const job = ui.importJob = (ui.importJob || 0) + 1;
+    const live = function () { return ui.modal === 'import' && ui.importJob === job; };
+    if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+      importStatus('That file is not a PDF. Save your Degree Works audit or Subject Results page as a PDF, then choose it here.', 'error');
+      return;
+    }
+    $('#import-text').value = '';
+    ui.importFrom = null;
+    renderImportResults();
+    importStatus('Opening ' + file.name + '…', 'busy');
+    let ocr = null;
+    Promise.all([loadPdfReader(), file.arrayBuffer()]).then(function (r) {
+      return r[0].getDocument({ data: new Uint8Array(r[1]), isEvalSupported: false }).promise;
+    }).then(function (doc) {
+      const n = Math.min(doc.numPages, PDF_MAX_PAGES);
+      const lines = [];
+      let chain = Promise.resolve();
+      for (let i = 1; i <= n; i++) {
+        chain = chain.then(function () {
+          if (!live()) throw STALE;
+          return doc.getPage(i);
+        }).then(function (page) {
+          return page.getTextContent().then(function (tc) {
+            const items = textItems(tc);
+            if (items.map(function (it) { return it.s; }).join('').replace(/\s/g, '').length >= 20) return items;
+            // a page printed to PDF can hold pictures of its text instead of text, so it is read like a scan
+            importStatus(ocr ? 'Reading page ' + i + ' of ' + n + '…' : 'Getting the text reader ready (about 7 MB, only the first time)…', 'busy');
+            ocr = ocr || loadOcr();
+            return ocr.then(function (w) {
+              if (!live()) throw STALE;
+              importStatus('Reading page ' + i + ' of ' + n + '…', 'busy');
+              return ocrItems(w, page);
+            });
+          }).then(function (items) { lines.push.apply(lines, pageLines(items)); });
+        });
+      }
+      return chain.then(function () { doc.destroy(); return lines; }, function (e) { doc.destroy(); throw e; });
+    }).then(function (lines) {
+      if (live()) showPdfLines(lines);
+    }).catch(function (e) {
+      if (e === STALE || !live()) return;
+      importStatus(e.lib ? 'The PDF reader could not load. Check your internet connection and try again, or paste your results below.' :
+        e.name === 'PasswordException' ? 'That PDF is password-protected. Save it again without a password, or paste your results below.' :
+        'That file could not be read as a PDF. Save your Degree Works audit or Subject Results page as a PDF and try again.', 'error');
+    }).then(function () {
+      if (ocr) ocr.then(function (w) { w.terminate(); }, function () {});
+    });
+  }
+  function showPdfLines(lines) {
+    const text = lines.join('\n');
+    // the Subject Results page links to Degree Works at the foot, so it is recognised first
+    const results = /Subject Results/i.test(text);
+    const audit = !results && /Degree\s?Works|Still needed/i.test(text);
+    ui.importFrom = { kind: results ? 'Subject Results page' : audit ? 'Degree Works audit' : 'PDF', found: parsePdfLines(lines, audit) };
+    renderImportResults();
+  }
+  function importStatus(msg, kind) {
+    const el = $('#import-status');
+    if (!el) return;
+    el.hidden = !msg;
+    el.textContent = msg || '';
+    el.className = 'import-status' + (kind ? ' is-' + kind : '');
+  }
+
+  // Matches subjects to the plan: by code, by the plan subject a Degree Works requirement names (the
+  // audit can count ECON 2002 for Corporate Finance (UG), say), or, for a passed subject outside the
+  // plan, by the open choice whose list includes it.
+  function choiceList(ctx, s) {
+    const k = ctx.custom ? (s.orig ? s.orig.kind : '') : s.kind;
+    const entries = ctx.custom ? (s.orig ? suggestionsFor(ctx, s) : []) : s.kind === 'inline' ? s.raw.options : s.kind === 'llb' || s.kind === 'pool' || s.kind === 'elective' ? poolEntries(ctx, s.raw) : [];
+    const codes = {};
+    entries.forEach(function (e) { codes[e.code] = e; });
+    // the most specific choice first: a named option, then a pool, then LLB Alternates and electives
+    return { s: s, codes: codes, rank: { fixed: 0, option: 0, inline: 0, pool: 1, llb: 2, elective: 3 }[k], at: orderIdx(s.year, s.session) };
+  }
+  function matchFound(found, ctx) {
     const inPlan = {};
-    ctx.slots.forEach(function (s) { if (!s.pending && s.code) (inPlan[s.code] = inPlan[s.code] || []).push(s); });
+    const byTitle = {};
+    ctx.slots.forEach(function (s) {
+      if (s.pending || !s.code) return;
+      (inPlan[s.code] = inPlan[s.code] || []).push(s);
+      if (!byTitle[normQ(s.title)]) byTitle[normQ(s.title)] = s;
+    });
+    const codes = {};
+    found.forEach(function (f) { codes[f.code] = 1; });
+    const claimed = {};
     // text such as "Year 2027" also looks like a code, so only real subjects (or ones in the plan) count
-    return found.map(function (f) {
-      const slots = inPlan[f.code] || [];
+    const out = found.map(function (f) {
+      let slots = inPlan[f.code] || [];
+      let via = '';
+      const named = !slots.length && f.label && byTitle[normQ(f.label)];
+      if (named && !codes[named.code] && !claimed[named.id]) { claimed[named.id] = 1; slots = [named]; via = f.code; }
       const known = GLOBAL_BY_CODE[f.code] || EXTRA_BY_CODE[f.code];
-      return { code: f.code, failed: f.failed, slots: slots, known: !!known, title: slots.length ? slots[0].title : known ? known.title : '', done: slots.length > 0 && slots.every(function (s) { return s.done; }) };
+      return {
+        code: slots.length ? slots[0].code : f.code, status: f.status, slots: slots, via: via, known: !!known, place: null, entry: null,
+        title: slots.length ? slots[0].title : known ? known.title : '', done: slots.length > 0 && slots.every(function (s) { return s.done; }),
+      };
     }).filter(function (f) { return f.slots.length || f.known; });
+    const open = ctx.slots.filter(function (s) { return s.pending; }).map(function (s) { return choiceList(ctx, s); }).filter(function (c) { return c.rank != null; });
+    out.filter(function (f) { return f.status === 'done' && !f.slots.length; }).map(function (f) {
+      return { f: f, fits: open.filter(function (c) { return c.codes[f.code]; }).sort(function (a, b) { return a.rank - b.rank || a.at - b.at; }) };
+    }).filter(function (x) { return x.fits.length; }).sort(function (a, b) { return a.fits.length - b.fits.length; }).forEach(function (x) {
+      const c = x.fits.find(function (o) { return !claimed[o.s.id]; });
+      if (!c) return;
+      claimed[c.s.id] = 1;
+      x.f.place = c.s;
+      x.f.entry = c.codes[x.f.code];
+      x.f.title = x.f.entry.title;
+    });
+    return out;
   }
   function openImport() {
     ui.modal = 'import';
     ui.importFound = [];
+    ui.importFrom = null;
     $('#modal-root').innerHTML = '<div class="modal-backdrop" data-action="backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="import-h">' +
-      '<div class="modal-head"><div><h2 id="import-h">Tick off from my results</h2><p>Paste your academic record, results or a list of subjects you have passed. Every subject code in the text is matched to your plan, and nothing you paste leaves this browser.</p></div><button type="button" class="modal-x" data-action="modal-close" aria-label="Close">×</button></div>' +
-      '<div class="modal-body import-body"><label class="field-label" for="import-text">Your results</label>' +
-      '<textarea class="input" id="import-text" rows="6" placeholder="For example:&#10;LAWS 1003  Fundamentals of Australian Law  HD&#10;LAWS1010  Legal Methods  D"></textarea>' +
+      '<div class="modal-head"><div><h2 id="import-h">Tick off from my results</h2><p>Add your Degree Works audit or Subject Results page as a PDF, or paste your results. Only the subjects you have passed are used: grades and marks are never shown or kept, and your file and text stay in this browser.</p></div><button type="button" class="modal-x" data-action="modal-close" aria-label="Close">×</button></div>' +
+      '<div class="modal-body import-body">' +
+      '<div class="import-drop" id="import-drop"><input type="file" id="import-file" accept="application/pdf,.pdf" hidden>' +
+      '<button type="button" class="btn btn-primary" data-action="import-file">Choose a PDF</button>' +
+      '<p><b>Degree Works audit or Subject Results page</b>Save either one as a PDF (Print, then Save as PDF), then choose it here or drop it on this box.</p></div>' +
+      '<p class="import-status" id="import-status" role="status" hidden></p>' +
+      '<label class="field-label" for="import-text">Or paste your results</label>' +
+      '<textarea class="input" id="import-text" rows="4" placeholder="For example:&#10;LAWS 1003  Fundamentals of Australian Law  HD&#10;LAWS1010  Legal Methods  D"></textarea>' +
       '<div id="import-results"></div></div>' +
       '<div class="modal-foot"><span class="small muted" id="import-summary">Subjects you pass later can be ticked here again.</span><div style="display:flex;gap:8px">' +
       '<button type="button" class="btn btn-ghost" data-action="modal-close">Cancel</button><button type="button" class="btn btn-primary" data-action="import-apply" id="import-apply" disabled>Tick subjects</button></div></div></div></div>';
     document.body.style.overflow = 'hidden';
-    const t = $('#import-text');
-    if (t && window.matchMedia('(pointer:fine)').matches) t.focus();
+  }
+  function importRow(f, i, place) {
+    const done = !place && f.done;
+    const note = done ? '<span class="status status-major">Already ticked</span>' :
+      f.status === 'failed' ? '<span class="status status-non">Looks like a fail or withdrawal</span>' :
+      f.status === 'progress' ? '<span class="status status-non">In progress</span>' :
+      place ? '<span class="status status-best">Fills a choice</span>' : '';
+    const at = place ? where(f.place) + ' · ' + esc(f.place.typeLabel || 'Open slot') : f.slots.map(where).join(', ') + (f.via ? ' · your audit counts ' + esc(f.via) + ' for it' : '');
+    return '<label class="import-row"><input type="checkbox" name="import-pick" value="' + i + '"' + (done ? ' checked disabled' : f.status === 'done' ? ' checked' : '') + '>' +
+      '<code>' + esc(f.code) + '</code><span class="import-title">' + esc(f.title) + ' <small>' + at + '</small></span>' + note + '</label>';
   }
   function renderImportResults() {
-    const found = parseResults($('#import-text').value, lastCtx);
+    const text = $('#import-text').value;
+    const from = text.trim() ? null : ui.importFrom;
+    const found = matchFound(from ? from.found : parseResults(text), lastCtx);
     ui.importFound = found;
+    const section = function (title, n, hint, body) {
+      return '<div class="pick-section"><h4><span>' + title + '</span><span>' + n + '</span></h4>' + (hint ? '<p class="pick-hint">' + hint + '</p>' : '') + body + '</div>';
+    };
+    const rows = function (place) {
+      return '<div class="import-list">' + found.map(function (f, i) { return (place ? f.place : f.slots.length) ? importRow(f, i, place) : ''; }).join('') + '</div>';
+    };
     const plan = found.filter(function (f) { return f.slots.length; });
-    const other = found.filter(function (f) { return !f.slots.length; });
+    const fill = found.filter(function (f) { return f.place; });
+    const other = found.filter(function (f) { return !f.slots.length && !f.place && f.status === 'done'; });
     let html = '';
-    if (plan.length) {
-      html += '<div class="pick-section"><h4><span>In your plan</span><span>' + plan.length + '</span></h4><div class="import-list">' + plan.map(function (f) {
-        const note = f.done ? '<span class="status status-major">Already ticked</span>' : f.failed ? '<span class="status status-non">Looks like a fail or withdrawal</span>' : '';
-        return '<label class="import-row"><input type="checkbox" name="import-pick" value="' + esc(f.code) + '"' + (f.done ? ' checked disabled' : f.failed ? '' : ' checked') + '>' +
-          '<code>' + esc(f.code) + '</code><span class="import-title">' + esc(f.title) + ' <small>' + f.slots.map(where).join(', ') + '</small></span>' + note + '</label>';
-      }).join('') + '</div></div>';
-    }
+    if (plan.length) html += section('In your plan', plan.length, '', rows(false));
+    if (fill.length) html += section('Fills an open choice', fill.length, 'Each of these is on the list for an open choice in your plan, so ticking it places it there as completed.', rows(true));
     if (other.length) {
-      html += '<div class="pick-section"><h4><span>Not in your plan</span><span>' + other.length + '</span></h4><p class="pick-hint">If these count towards your degree, add them as a choice or elective first, then tick them here or on the plan.</p><div class="chiplist import-other">' +
-        other.map(function (f) { return '<span class="chipbtn"><code>' + esc(f.code) + '</code>' + esc(f.title) + '</span>'; }).join('') + '</div></div>';
+      html += section('Not in your plan', other.length, 'If these count towards your degree, add them as a choice or elective first, then tick them here or on the plan.', '<div class="chiplist import-other">' +
+        other.map(function (f) { return '<span class="chipbtn"><code>' + esc(f.code) + '</code>' + esc(f.title) + '</span>'; }).join('') + '</div>');
     }
-    if (!found.length && $('#import-text').value.trim()) html = '<p class="pick-hint">No subject codes found. Codes look like LAWS 1003 or LAWS1003.</p>';
+    if (!found.length && text.trim()) html = '<p class="pick-hint">No subject codes found. Codes look like LAWS 1003 or LAWS1003.</p>';
     $('#import-results').innerHTML = html;
+    if (from) {
+      const passed = found.filter(function (f) { return f.status === 'done'; }).length;
+      importStatus(passed ? 'Read your ' + from.kind + ': ' + plural(passed, 'passed subject') + ' found. Check the list, then tick them off.' :
+        'No passed subjects found in that ' + from.kind + '. Use your Degree Works audit or Subject Results page saved as a PDF, or paste your results below.', passed ? 'ok' : 'error');
+    } else if (text.trim()) importStatus('');
     updateImportCount();
   }
   function updateImportCount() {
@@ -2126,20 +2434,23 @@
     btn.textContent = n ? 'Tick ' + plural(n, 'subject') : 'Tick subjects';
   }
   function applyImport() {
-    const codes = Array.from(document.querySelectorAll('input[name="import-pick"]:checked:not(:disabled)')).map(function (i) { return i.value; });
+    const picked = Array.from(document.querySelectorAll('input[name="import-pick"]:checked:not(:disabled)')).map(function (i) { return ui.importFound[+i.value]; });
     const key = currentKey();
-    let n = 0;
-    (ui.importFound || []).forEach(function (f) {
-      if (codes.indexOf(f.code) < 0) return;
-      n++;
-      f.slots.forEach(function (s) {
+    let placed = 0;
+    picked.forEach(function (f) {
+      if (f.place) {
+        placed++;
+        if (isCustom()) setCustomSubject(f.place.idx, f.code, '', GLOBAL_BY_CODE[f.code] ? GLOBAL_BY_CODE[f.code].cp : null);
+        else setPick(f.place.id, { code: f.entry.code, title: f.entry.title });
+      }
+      (f.place ? [f.place] : f.slots).forEach(function (s) {
         if (isCustom()) state.custom.slots[s.idx].done = true;
         else { state.done[key] = state.done[key] || {}; state.done[key][s.id] = 1; }
       });
     });
     closeModal();
     render();
-    toast('Ticked off ' + plural(n, 'subject') + ' from your results.');
+    toast('Ticked off ' + plural(picked.length, 'subject') + ' from your results' + (placed ? ', ' + placed + ' of them in open choices' : '') + '.');
   }
 
   // ======================================================================== PDF / print engine
@@ -2533,6 +2844,7 @@
       }
       case 'copy-codes': copyText(el.dataset.codes, 'Copied ' + el.dataset.codes + ' for enrolment.'); break;
       case 'import-open': openImport(); break;
+      case 'import-file': $('#import-file').click(); break;
       case 'import-apply': applyImport(); break;
       case 'summer-add': {
         const y = +el.dataset.y;
@@ -2644,6 +2956,10 @@
       toast((s.pending ? 'Open slot' : s.code) + ' moved to Year ' + v[0] + ' ' + v[1] + '.');
       flashSlot(id);
     } else if (t.name === 'import-pick') { updateImportCount(); }
+    else if (t.id === 'import-file') {
+      if (t.files[0]) readPdf(t.files[0]);
+      t.value = '';
+    }
     else if (t.name === 'cs-start') { setupSync('start'); }
     else if (t.id === 'cs-tpl-deg') { $('#cs-tpl-major').innerHTML = tplMajorOptions(t.value, DEG[t.value].options[0]); setupSync('tpl'); }
     else if (t.id === 'sel-major') { setMajor(t.value); render(); }
@@ -2698,6 +3014,21 @@
     }
   });
 
+  // a PDF dropped anywhere while Tick off from my results is open is read, rather than opened by the browser
+  document.addEventListener('dragover', function (ev) {
+    if (ui.modal !== 'import') return;
+    ev.preventDefault();
+    $('#import-drop').classList.add('is-over');
+  });
+  document.addEventListener('dragleave', function (ev) { if (ui.modal === 'import' && !ev.relatedTarget) $('#import-drop').classList.remove('is-over'); });
+  document.addEventListener('drop', function (ev) {
+    if (ui.modal !== 'import') return;
+    ev.preventDefault();
+    $('#import-drop').classList.remove('is-over');
+    const f = ev.dataTransfer && ev.dataTransfer.files[0];
+    if (f) readPdf(f);
+  });
+
   window.addEventListener('resize', function () { if (ui.modal === 'export') renderExportPreview(); });
   // remember whether the advisory panel is open across re-renders (toggle does not bubble)
   document.addEventListener('toggle', function (ev) { if (ev.target.id === 'advisory-box') ui.advisoryOpen = ev.target.open; }, true);
@@ -2731,5 +3062,7 @@
     unscramble: function (code) { return unscrambleCode(code); },
     buildPrintDoc: function (opts) { return buildPrintDoc(buildContext(), Object.assign({}, state.exp, opts || {})); },
     preparePrint: function (opts) { Object.assign(state.exp, opts || {}); preparePrint(); },
+    // lines as a PDF's pages would give them, for checks that run without loading the PDF reader
+    importPdfLines: function (lines) { showPdfLines(lines); },
   };
 })();

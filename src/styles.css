@@ -637,7 +637,19 @@ table.cat tr.extra td.c-code { color: var(--slate); }
 .next-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .chipbtn.is-open { border-style: dashed; }
 .import-body { display: grid; gap: 8px; align-content: start; padding: 14px 20px; }
-.import-body textarea { width: 100%; resize: vertical; font: 13px/1.5 var(--mono); min-height: 120px; }
+.import-body textarea { width: 100%; resize: vertical; font: 13px/1.5 var(--mono); min-height: 88px; }
+.import-drop { display: flex; align-items: center; gap: 16px; padding: 14px 16px; background: var(--surface-2); border: 1px dashed var(--hairline-2); border-radius: var(--radius); transition: border-color .15s, background .15s; }
+.import-drop.is-over { border-color: var(--crimson); background: var(--crimson-tint); }
+.import-drop .btn { flex: none; }
+.import-drop p { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.import-drop p b { display: block; font-size: 13.5px; color: var(--ink); }
+.import-status { margin: 0; padding: 8px 12px; border-left: 3px solid var(--gold); background: var(--gold-tint); font-size: 13px; color: var(--text); }
+.import-status[hidden] { display: none; }
+.import-status.is-busy::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 8px; border: 2px solid var(--gold); border-right-color: transparent; border-radius: 50%; vertical-align: -1px; animation: spin .8s linear infinite; }
+.import-status.is-ok { border-left-color: var(--ok); background: var(--ok-tint); }
+.import-status.is-error { border-left-color: var(--crimson); background: var(--crimson-tint); color: var(--crimson); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.import-body .field-label { margin-top: 6px; }
 .import-list { display: grid; gap: 4px; }
 .import-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--hairline); border-radius: 3px; cursor: pointer; font-size: 13.5px; }
 .import-row:hover { border-color: var(--hairline-2); }
@@ -646,4 +658,5 @@ table.cat tr.extra td.c-code { color: var(--slate); }
 @media (max-width: 760px) {
   .import-row { grid-template-columns: auto auto minmax(0, 1fr); }
   .import-row .status { grid-column: 3; justify-self: start; }
+  .import-drop { flex-direction: column; align-items: stretch; }
 }

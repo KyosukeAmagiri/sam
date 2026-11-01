@@ -637,7 +637,7 @@ table.cat tr.extra td.c-code { color: var(--slate); }
 .next-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .chipbtn.is-open { border-style: dashed; }
 .import-body { display: grid; gap: 8px; align-content: start; padding: 14px 20px; }
-.import-body textarea { width: 100%; resize: vertical; font: 13px/1.5 var(--mono); min-height: 88px; }
+.import-body textarea { width: 100%; resize: vertical; font: 13px/1.5 var(--mono); min-height: 120px; }
 .import-drop { display: flex; align-items: center; gap: 16px; padding: 14px 16px; background: var(--surface-2); border: 1px dashed var(--hairline-2); border-radius: var(--radius); transition: border-color .15s, background .15s; }
 .import-drop.is-over { border-color: var(--crimson); background: var(--crimson-tint); }
 .import-drop .btn { flex: none; }
@@ -649,7 +649,17 @@ table.cat tr.extra td.c-code { color: var(--slate); }
 .import-status.is-ok { border-left-color: var(--ok); background: var(--ok-tint); }
 .import-status.is-error { border-left-color: var(--crimson); background: var(--crimson-tint); color: var(--crimson); }
 @keyframes spin { to { transform: rotate(360deg); } }
-.import-body .field-label { margin-top: 6px; }
+.progress-head { padding-top: 4px; }
+.progress-head h3 { margin: 4px 0 2px; font: 600 22px/1.2 var(--serif); color: var(--ink); }
+.progress-head p:last-child { margin: 0; font-size: 13px; color: var(--muted); }
+.progress-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.progress-facts > div { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius); }
+.progress-facts b { font: 600 26px/1 var(--serif); color: var(--crimson); }
+.progress-facts span { font-size: 12.5px; color: var(--text); }
+.progress-facts small { display: block; color: var(--muted); }
+.progress-sessions { display: grid; gap: 8px; }
+.ps-row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; align-items: start; }
+.ps-when { font: 700 10px/2.2 var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
 .import-list { display: grid; gap: 4px; }
 .import-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--hairline); border-radius: 3px; cursor: pointer; font-size: 13.5px; }
 .import-row:hover { border-color: var(--hairline-2); }
@@ -659,4 +669,6 @@ table.cat tr.extra td.c-code { color: var(--slate); }
   .import-row { grid-template-columns: auto auto minmax(0, 1fr); }
   .import-row .status { grid-column: 3; justify-self: start; }
   .import-drop { flex-direction: column; align-items: stretch; }
+  .progress-facts { grid-template-columns: 1fr; }
+  .ps-row { grid-template-columns: 1fr; gap: 2px; }
 }

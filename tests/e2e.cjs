@@ -4,7 +4,7 @@
    node tests/e2e.cjs            # behaviour checks across all 48 pathways
    node tests/e2e.cjs --pdf      # also renders every pathway to PDF (needs pdfinfo/pdftotext from poppler)
    node tests/e2e.cjs --samples  # also writes the sample PDFs in samples/
-   node tests/e2e.cjs --import   # also uploads generated results PDFs, one as text and one as a picture
+   node tests/e2e.cjs --import   # also imports generated results PDFs, one as text and one as a picture
                                  # (loads the PDF reader and text recogniser from jsDelivr, so needs internet)
 
    Requires Playwright with Chromium (npm i -D playwright && npx playwright install chromium). */
@@ -450,70 +450,109 @@ async function renderPdf(page, key, mode, orient, file) {
   check(pp.errors.length === 0, 'progress tools console errors: ' + pp.errors.join('; '));
   await pp.close();
 
-  // ---------------------------------------------------------------- tick off from a PDF (lines as the PDF reader gives them)
+  // ---------------------------------------------------------------- import my progress (lines as the PDF reader gives them)
+  // The date is fixed at 1 November 2026, during Spring 2026, so which sessions have begun does not depend on when this runs.
+  const NOW = '2026-11-01T10:00:00';
   const ip = await newPage(browser);
   await ip.goto(APP);
-  const importRows = () => ip.$$eval('#import-results .pick-section', ss => ss.map(s => [s.querySelector('h4 span').textContent,
-    Array.from(s.querySelectorAll('.import-row')).map(r => r.querySelector('code').textContent + (r.querySelector('input').checked ? '+' : '-')).concat(
-      Array.from(s.querySelectorAll('.chipbtn code')).map(c => c.textContent))]));
-  await ip.evaluate(() => { localStorage.clear(); WSLSA.select('2785|BASE'); });
-  await ip.click('[data-action="import-open"]');
-  check(!!(await ip.$('#import-file[accept*="pdf"]')) && !!(await ip.$('[data-action="import-file"]')), 'the import dialog should offer a PDF upload');
-  await ip.setInputFiles('#import-file', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('LAWS 1003') });
-  check(/not a PDF/.test(await ip.textContent('#import-status')) && !(await ip.$('.import-row')), 'a file that is not a PDF should be refused');
-  await ip.evaluate(lines => WSLSA.importPdfLines(lines), [
-    'Western Sydney University Audit', 'Student, Sample - 10000000', 'Degree progress 40%',
-    'Accounting and Laws Core INCOMPLETE', 'Subject Title Grade Credit Points Term',
-    'Fundamentals of Australian Law LAWS 1003 Fundamentals of Australian Law D 10 2024 Autumn, SC 1,', 'WSTC T1',
-    'Corporate Finance (UG) ECON 2002 Corporate Financial Management H 10 2024 Spring',
-    'Alternate Subject MATH 1030 Statistics for Business C 10 2024 Autumn, SC 1,',
-    'Torts Law LAWS 2013 Torts Law F 0 2024 Spring',
+  const planOf = () => ip.evaluate(() => {
+    const c = WSLSA.context();
+    return { start: WSLSA.custom().start, cp: c.plan.cp, total: c.totalCP, slots: c.slots.map(s => ({ code: s.pending ? '' : s.code, y: s.year, s: s.session, done: s.done, kind: s.typeLabel, replaced: s.replaced ? s.replaced.code : '' })) };
+  });
+  const at = (plan, code) => plan.slots.find(x => x.code === code) || {};
+  await ip.evaluate(() => { localStorage.clear(); WSLSA.select('2848|BASE'); });
+  await ip.click('[data-action="progress-open"]');
+  check(!!(await ip.$('#progress-file[accept*="pdf"]')) && await ip.isDisabled('#progress-apply'), 'Import my progress should offer a PDF upload and wait for one');
+  await ip.setInputFiles('#progress-file', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('LAWS 1003') });
+  check(/not a PDF/.test(await ip.textContent('#progress-status')) && await ip.isDisabled('#progress-apply'), 'a file that is not a PDF should be refused');
+  // a Degree Works audit for 2785, started Autumn 2025: history in its real sessions, the rest from its Still needed lists
+  await ip.evaluate(([lines, now]) => WSLSA.importPdfLines(lines, now), [[
+    'Western Sydney University Audit', 'Student, Sample - 10000000',
+    'Level Undergraduate Major No Major Program B Accounting/B Laws (2785) School Law Campus PS_2785 Catalogue Term 202530',
+    'Accounting and Laws Program Requirements INCOMPLETE', 'Credit points required: 400 Credit points applied: 60 Catalogue Term: 2025 AUTUMN',
+    'Fundamentals of Australian Law LAWS 1003 Fundamentals of Australian Law D 10 2025 Autumn, SC 1,', 'WSTC T1',
+    'Alternate Subject MATH 1030 Statistics for Business C 10 2025 Autumn, SC 1,', 'WSTC T1',
+    'Corporate Finance (UG) ECON 2002 Corporate Financial Management H 10 2025 Spring',
+    'Legal Analysis and Critique LAWS 1009 Legal Analysis and Critique D 10 2025 Spring',
+    'Torts Law LAWS 2013 Torts Law F 0 2025 Spring',
+    'Laws Alternate Pool Subject List LAWS 2012 Regulatory Risk and Compliance P 10 2025 Summer',
     'Government and Public Law LAWS 2008 Government and Public Law NA (10) 2026 Spring',
     'Equity & Trusts Still needed: 10 Credit Points in LAWS 3018',
-    'Laws Alternate Pool Subject List LAWS 2012 Regulatory Risk and Compliance P 10 2024 Summer',
-    '60 Credit Points in JUST 2013 or 3008 or LAWS 2005 or 2007 or 3001',
-    'Legal Analysis and Critique LAWS 1009 Legal Analysis and Critique D 10 2024 Spring',
-    'Not Currently Applied NOAW 0004 Academic Integrity Module S 0 2024 Autumn, SC 1, WSTC T1',
+    'Professional Responsibility and Legal Ethics Still needed: 10 Credit Points in LAWS 2015',
+    'Torts Law Still needed: 10 Credit Points in LAWS 2013',
+    'Still needed: 20 Credit Points in JUST 2013 or 3008 or LAWS 2005 or 2007 or', '3001 or 3002',
+    'Accounting and Law Core Still needed: See Accounting and Laws Core section',
+    'Not Currently Applied NOAW 0004 Academic Integrity Module S 0 2025 Autumn, SC 1, WSTC T1',
     'Ellucian Degree Works - Copyright 1995-2026 Ellucian Company L.P.',
-  ]);
-  check(/Degree Works audit: 5 passed subjects/.test(await ip.textContent('#import-status')), `the audit should report 5 passed subjects, got "${await ip.textContent('#import-status')}"`);
-  const dw = await importRows();
-  check(JSON.stringify(dw) === JSON.stringify([['In your plan', ['LAWS 1003+', 'FINC 2003+', 'LAWS 2013-', 'LAWS 2008-']], ['Fills an open choice', ['MATH 1030+', 'LAWS 2012+']], ['Not in your plan', ['LAWS 1009']]]),
-    `an audit should tick passes (and the plan subject a requirement names), leave fails and subjects in progress, fill open choices and skip Still needed lists, got ${JSON.stringify(dw)}`);
-  const review = await ip.textContent('#import-results');
-  check(/counts ECON 2002/.test(review) && !review.includes('2024') && !review.includes('(10)') && !/\bNA\b/.test(review), 'the review should name the counted subject and show no grades, credit points or terms');
-  await ip.click('#import-apply');
-  const dwDone = await ip.evaluate(() => { const c = WSLSA.context(); return c.slots.filter(s => s.done).map(s => s.code).sort().join(',') + '|' + c.byId['1S4'].code; });
-  check(dwDone === 'FINC 2003,LAWS 1003,LAWS 2012,MATH 1030|MATH 1030', `applying the audit should tick and place the passed subjects, got ${dwDone}`);
-  // the Subject Results page, read from printed pages: OCR slips in codes and grades are tolerated, rows without a grade are left
-  await ip.click('[data-action="import-open"]');
-  await ip.evaluate(lines => WSLSA.importPdfLines(lines), [
+  ], NOW]);
+  check(/Degree Works audit/.test(await ip.textContent('#progress-status')) && await ip.isEnabled('#progress-apply'), `the audit should be read, got "${await ip.textContent('#progress-status')}"`);
+  const preview = await ip.innerText('#progress-results');
+  check(/2785 Bachelor of Accounting\/Bachelor of Laws/.test(preview) && /Started Autumn 2025/.test(preview) && /5\s*Completed/.test(preview) && /1\s*Studying now/.test(preview), `the preview should name the degree, start and counts, got ${preview.replace(/\n+/g, ' | ').slice(0, 240)}`);
+  check(/LAWS 2013 looks like a fail/.test(preview) && /follows that degree/.test(preview) && /Still needed lists in your audit/.test(preview) && /laid out from Autumn 2027/.test(preview), 'the preview should explain the fail, the degree change and where the rest comes from');
+  check(!/\b(D|H|C|P|NA)\b \(?10\)?|2025 Autumn, SC|\(10\)/.test(preview), 'the preview should show no grades, credit point columns or raw terms');
+  await ip.click('#progress-apply');
+  const dw = await planOf();
+  check(dw.start === 2025 && dw.cp === 400 && dw.total === 400, `the plan should start in 2025 and hold 400 CP, got start ${dw.start}, ${dw.total}/${dw.cp}`);
+  const where = c => { const x = at(dw, c); return x.y + x.s + (x.done ? '+' : '-'); };
+  check(['LAWS 1003', 'MATH 1030', 'ECON 2002', 'LAWS 1009', 'LAWS 2012', 'LAWS 2008'].map(where).join(' ') === '1Autumn+ 1Autumn+ 1Spring+ 1Spring+ 1Summer+ 2Spring-',
+    `history should sit in its real sessions, passes ticked and subjects in progress not, got ${['LAWS 1003', 'MATH 1030', 'ECON 2002', 'LAWS 1009', 'LAWS 2012', 'LAWS 2008'].map(where).join(' ')}`);
+  check(at(dw, 'ECON 2002').replaced === 'FINC 2003' && at(dw, 'MATH 1030').kind === 'Choice' && at(dw, 'LAWS 2012').kind === 'LLB Alternate', 'history should be tied to the pathway slots it fills');
+  check(where('LAWS 2015') === '3Autumn-' && where('LAWS 3018') === '3Autumn-' && where('LAWS 2013') === '3Spring-', `what is still needed should start in Autumn 2027, phase-out subjects first and each in its session, got ${['LAWS 2015', 'LAWS 3018', 'LAWS 2013'].map(where).join(' ')}`);
+  check(dw.slots.filter(x => !x.code && x.kind === 'LLB Alternate').length === 2 && !dw.slots.some(x => ['LAWS 3001', 'JUST 2013', 'NOAW 0004', 'FINC 2003'].indexOf(x.code) >= 0), 'a list to choose from should become open LLB Alternate slots, with no listed code placed');
+  check(JSON.stringify(await ip.$$eval('.year-bar h2 small', s => s.slice(0, 3).map(x => x.textContent))) === JSON.stringify(['2025', '2026', '2027']) && /started 2025/i.test(await ip.textContent('#facts')), 'year bars and facts should show the real calendar years');
+  check(/Next to enrol/.test(await ip.textContent('#next')) && /Autumn 2027/.test(await ip.textContent('#next')), `Next to enrol should pass over sessions that have begun, got ${(await ip.textContent('#next')).slice(0, 80)}`);
+  check(!/TBC|2026 data|Summer/.test(await ip.textContent('#advisory summary')), 'completed subjects should raise no session or Summer warnings');
+  await ip.click('[data-action="load"][data-load="PT"]');
+  const ptYears = await ip.$$eval('.year', ys => ys.map(y => y.querySelector('h2 small').textContent.slice(0, 4) + ':' + y.querySelectorAll('.subj').length));
+  check(ptYears[0] === '2025:5' && ptYears[1] === '2026:1' && ptYears.length > 4, `part-time should keep sessions that have begun and spread the rest, got ${ptYears.join(' ')}`);
+  await ip.click('[data-action="load"][data-load="FT"]');
+  // the plan and its start year travel in a share link
+  const sharedLink = await ip.evaluate(() => WSLSA.planUrl());
+  const ip2 = await newPage(browser);
+  await ip2.goto(sharedLink);
+  const reopened = await ip2.evaluate(() => { const c = WSLSA.custom(); return c.start + ':' + c.slots.filter(x => x.done).length + ':' + c.slots.length; });
+  check(reopened === '2025:5:' + dw.slots.length, `a share link should reopen the imported plan with its start year, got ${reopened}`);
+  await ip2.close();
+  // Year you started in the plan setup keeps past years for a plan built by hand too
+  await ip.click('[data-action="custom-setup"]');
+  check(await ip.$eval('#cs-year', s => s.value) === '2025', 'the setup should show the year the plan started');
+  await ip.selectOption('#cs-year', '2023');
+  await ip.click('button[type=submit][form=setup-form]');
+  check(await ip.evaluate(() => WSLSA.custom().start) === 2023 && (await ip.$$eval('.year-bar h2 small', s => s[0].textContent)) === '2023', 'changing the year you started should relabel the plan');
+  // the 2027 WSLSA pathways stay as they are
+  await ip.evaluate(() => WSLSA.select('2785|BASE'));
+  check(await ip.$$eval('.year-bar h2 small', s => s[0].textContent) === '2027' && await ip.evaluate(() => !WSLSA.context().custom && !WSLSA.context().slots.some(s => s.done)), 'the 2027 pathway should still start in 2027 with nothing ticked');
+  // the Subject Results page, read from printed pages: OCR slips are tolerated, and without Still needed lists the rest follows the pathway
+  await ip.click('[data-action="progress-open"]');
+  await ip.evaluate(([lines, now]) => WSLSA.importPdfLines(lines, now), [[
     'Subject Results', '2785 - Bachelor of Accounting/Bachelor of Laws',
     'TERM SUBJECT CODE SUBJECT TITLE GRADE MARK CREDIT COUNTED in REASON', 'POINTS GPA PROVIDED (if no',
-    '2026 ACCT3007 Corporate D 76 10', 'Autumn Accounting v', '2026 ACCT3001 Accounting Information 10',
-    '2025 LAWS2O03 Contracts Cc 75 10', '2024 ECON1016 Evidence-Based AF 12 0', '2024 NOAWO0004 Academic Integrity S 100 0',
-    '2025 ACCT2005 Techs in Finan (¢} 71 10', '2024 ACCT1007 Financial 44 10',
+    '2026 ACCT3007 Corporate D 76 10', 'Autumn Accounting v',
+    '2025 LAWS2O03 Contracts Cc 75 10', 'Autumn',
+    '2025 ACCT2005 Techs in Finan (¢} 71 10', 'Autumn Acctg', 'https://example.edu/results 1/2', '01/11/2026, 20:50 Banner Page Builder',
+    '2025 ACCT1007 Financial 44 10', 'Spring Accounting',
+    '2025 NOAWO0004 Academic Integrity S 100 0', 'Autumn Module',
+    'Total Credit Points Required 400',
     'View your DegreeWorks audit (https://dw-prod.example/worksheets/WEB31) to',
-  ]);
-  check(/Subject Results page: 3 passed subjects/.test(await ip.textContent('#import-status')), `the results page should report 3 passed subjects, got "${await ip.textContent('#import-status')}"`);
-  const sr = await importRows();
-  check(JSON.stringify(sr) === JSON.stringify([['In your plan', ['ACCT 3007+', 'LAWS 2003+', 'ACCT 2005+', 'ACCT 1007-']]]), `results should tick passes read with OCR slips (an unreadable grade falls back to the mark) and skip rows with no result, got ${JSON.stringify(sr)}`);
-  // typing over a PDF's results switches to the pasted text
-  await ip.fill('#import-text', 'ACCT 1005');
-  await ip.waitForTimeout(100);
-  check(JSON.stringify(await importRows()) === JSON.stringify([['In your plan', ['ACCT 1005+']]]) && await ip.isHidden('#import-status'), 'pasted text should replace the PDF results');
-  await ip.click('[data-action="modal-close"]');
-  check(ip.errors.length === 0, 'PDF import console errors: ' + ip.errors.join('; '));
+  ], NOW]);
+  const srText = await ip.innerText('#progress-results');
+  check(/Subject Results page/.test(await ip.textContent('#progress-status')) && /3\s*Completed/.test(srText) && /does not list what you still need/.test(srText) && /ACCT 1007 looks like a fail/.test(srText), `the results page should give 3 passes, the fail and a note on the rest, got ${srText.replace(/\n+/g, ' | ').slice(0, 240)}`);
+  await ip.click('#progress-apply');
+  const sr = await planOf();
+  const srAt = c => { const x = at(sr, c); return x.y + x.s + (x.done ? '+' : '-'); };
+  check(sr.start === 2025 && ['LAWS 2003', 'ACCT 2005', 'ACCT 3007', 'ACCT 1007'].map(srAt).join(' ') === '1Autumn+ 1Autumn+ 2Autumn+ 3Spring-' && sr.total === 400,
+    `results should place passes in their sessions and the rest of the pathway from 2027, got start ${sr.start} ${['LAWS 2003', 'ACCT 2005', 'ACCT 3007', 'ACCT 1007'].map(srAt).join(' ')} ${sr.total} CP`);
+  check(ip.errors.length === 0, 'Import my progress console errors: ' + ip.errors.join('; '));
   await ip.close();
 
-  // ---------------------------------------------------------------- tick off from real PDF files (loads the PDF reader and text recogniser from jsDelivr)
+  // ---------------------------------------------------------------- import real PDF files (loads the PDF reader and text recogniser from jsDelivr)
   if (args.has('--import')) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wslsa-import-'));
     const maker = await newPage(browser, { viewport: { width: 820, height: 600 }, deviceScaleFactor: 2 });
     const rows = [['2024 Autumn', 'LAWS1003', 'Fundamentals of Australian Law', 'D', '77', '10'], ['2024 Spring', 'LAWS2013', 'Torts Law', 'F', '31', '0'],
       ['2025 Autumn', 'LAWS2003', 'Contracts', 'C', '68', '10'], ['2025 Spring', 'LAWS2012', 'Regulatory Risk and Compliance', 'P', '55', '10']];
     // cells are top-aligned, as on the real page, so each subject's grade, mark and credit points share its code's line
-    const table = '<style>td,th{vertical-align:top}</style><h1>Subject Results</h1><table style="font:16px Arial;border-spacing:22px 14px"><tr><th>TERM</th><th>SUBJECT CODE</th><th>SUBJECT TITLE</th><th>GRADE</th><th>MARK</th><th>CREDIT POINTS</th></tr>' +
+    const table = '<style>td,th{vertical-align:top}</style><h1>Subject Results</h1><p style="font:16px Arial">2848 - Bachelor of Laws</p><table style="font:16px Arial;border-spacing:22px 14px"><tr><th>TERM</th><th>SUBJECT CODE</th><th>SUBJECT TITLE</th><th>GRADE</th><th>MARK</th><th>CREDIT POINTS</th></tr>' +
       rows.map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('') + '</table>';
     await maker.setContent(table);
     await maker.pdf({ path: path.join(tmp, 'results-text.pdf'), format: 'A4' });
@@ -526,11 +565,13 @@ async function renderPdf(page, key, mode, orient, file) {
       const up = await newPage(browser);
       await up.goto(APP);
       await up.evaluate(() => { localStorage.clear(); WSLSA.select('2848|BASE'); });
-      await up.click('[data-action="import-open"]');
-      await up.setInputFiles('#import-file', path.join(tmp, file));
-      await up.waitForSelector('#import-status.is-ok, #import-status.is-error', { timeout: 180000 });
-      const got = await up.$$eval('#import-results .import-row', rs => rs.map(r => r.querySelector('code').textContent + (r.querySelector('input').checked ? '+' : '-')));
-      check(JSON.stringify(got) === JSON.stringify(['LAWS 1003+', 'LAWS 2013-', 'LAWS 2003+', 'LAWS 2012+']), `a ${label} PDF should give the passed subjects ticked and the fail unticked, got ${JSON.stringify(got)} (${await up.textContent('#import-status')})`);
+      await up.click('[data-action="progress-open"]');
+      await up.setInputFiles('#progress-file', path.join(tmp, file));
+      await up.waitForSelector('#progress-status.is-ok, #progress-status.is-error', { timeout: 180000 });
+      const status = await up.textContent('#progress-status');
+      if (await up.isEnabled('#progress-apply')) await up.click('#progress-apply');
+      const got = await up.evaluate(() => { const c = WSLSA.custom(); return c ? c.start + ' ' + c.slots.filter(x => x.done).map(x => x.code + '@' + x.y + x.s).join(',') : ''; });
+      check(got === '2024 LAWS 1003@1Autumn,LAWS 2003@2Autumn,LAWS 2012@2Spring', `a ${label} PDF should place the passed subjects in their sessions and leave out the fail, got "${got}" (${status})`);
       check(up.errors.length === 0, `${label} PDF import console errors: ` + up.errors.join('; '));
       await up.close();
     }
